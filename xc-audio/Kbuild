@@ -1,0 +1,3 @@
+obj-m += xc-audio.o
+
+xc-audio-y := main.o ring.o
