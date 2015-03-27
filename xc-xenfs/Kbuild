@@ -1,3 +1,0 @@
-obj-m += xc-xenfs.o
-
-xc-xenfs-y			  = super.o xenbus.o

@@ -32,8 +32,6 @@
  * IN THE SOFTWARE.
  */
 
-#include "xen-dkms.h"
-
 #include <linux/version.h>
 #include <linux/mm.h>
 #include <linux/init.h>
@@ -45,9 +43,10 @@
 #include <linux/socket.h>
 #include <linux/sched.h>
 #include "v4v.h"
-#include <xen/evtchn.h>
+#include <xen/page.h>
+#include <xen/grant_table.h>
+#include <xen/interface/memory.h>
 #include <xen/v4v.h>
-#include <xen/xen.h>
 #include <linux/v4v_dev.h>
 #include <linux/fs.h>
 #include <linux/platform_device.h>
@@ -3646,7 +3645,7 @@ unbind_virq (void)
   if (v4v_irq >= 0)
     unbind_from_per_cpu_irq (v4v_irq, 0, &v4v_virq_action);
 #else
-  xc_unbind_from_irqhandler (v4v_irq, NULL);
+  unbind_from_irqhandler (v4v_irq, NULL);
 #endif
   v4v_irq = -1;
 }
@@ -3659,7 +3658,7 @@ bind_virq (void)
 #if 0
   result = bind_virq_to_irqaction (VIRQ_V4V, 0, &v4v_virq_action);
 #else
-  result = xc_bind_virq_to_irqhandler (VIRQ_V4V, 0, v4v_interrupt, 0, "v4v", NULL);
+  result = bind_virq_to_irqhandler (VIRQ_V4V, 0, v4v_interrupt, 0, "v4v", NULL);
 #endif
   DEBUG_APPLE;
   if (result < 0)

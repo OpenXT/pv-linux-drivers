@@ -22,10 +22,10 @@ ifneq ($(FROM_DKMS),y)
 include Kbuild
 else
 KDIR := /lib/modules/${KVERSION}/build
-ENOSTDINC_FLAGS := -I$(CURDIR)/include -I$(CURDIR)/include/xc
+ENOSTDINC_FLAGS := -I$(CURDIR)/include
 
 mdkms:
-	make -C $(KDIR) FROM_DKMS=n NOSTDINC_FLAGS="$(ENOSTDINC_FLAGS)" M=$(CURDIR) modules EXTRA_CFLAGS="-g"
+	make -C $(KDIR) FROM_DKMS=n NOSTDINC_FLAGS="$(ENOSTDINC_FLAGS)" M=$(CURDIR) modules EXTRA_CFLAGS="-g -O2"
 clean:
 	make -C $(KDIR) FROM_DKMS=n M=$(CURDIR) clean
 endif
@@ -35,10 +35,10 @@ else
 KVERSION ?= $(shell uname -r)
 
 KDIR := /lib/modules/${KVERSION}/build
-export NOSTDINC_FLAGS := -I$(CURDIR)/include -I$(CURDIR)/include/xc
+export NOSTDINC_FLAGS := -I$(CURDIR)/include
 
 all:
-	make -C $(KDIR) M=$(CURDIR) modules EXTRA_CFLAGS="-g -O2"
+	make -C $(KDIR) V=1 M=$(CURDIR) modules EXTRA_CFLAGS="-g -O2"
 
 install:
 	install -d ${DESTDIR}/usr/include/xen

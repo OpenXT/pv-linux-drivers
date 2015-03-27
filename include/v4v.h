@@ -28,7 +28,6 @@
 #include <linux/version.h>
 
 #include <xen/page.h>
-#include <xen/events.h>
 #if ( LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,38) )
 #include <asm/xen/hypercall.h>
 #include <xen/xen.h>
@@ -40,6 +39,8 @@
 #endif
 
 #endif /* 2.6.38 */
+
+#include <xen/events.h>
 
 #ifndef _hypercall6
 #include <xen/hypercall6.h>

@@ -30,8 +30,8 @@
 #ifndef __XEN_PUBLIC_IO_USBIF_H__
 #define __XEN_PUBLIC_IO_USBIF_H__
 
-#include "ring.h"
-#include "../grant_table.h"
+#include <xen/interface/io/ring.h>
+#include <xen/interface/grant_table.h>
 
 /*
  * Front->back notifications: When enqueuing a new request, sending a
@@ -60,14 +60,16 @@
 #define USBIF_T_ABORT_PIPE	5
 #define USBIF_T_GET_FRAME	6
 #define USBIF_T_GET_SPEED	7
+#define USBIF_T_CANCEL		8
 
-#define USBIF_T_MAX		(USBIF_T_GET_SPEED)
+#define USBIF_T_MAX		(USBIF_T_CANCEL)
 
 #define USBIF_F_SHORTOK		0x01
 #define USBIF_F_RESET		0x02
 #define USBIF_F_ASAP		0x04 // start ISO request on next available frame
 #define USBIF_F_INDIRECT	0x08 // this request contains indirect segments 
 #define USBIF_F_CYCLE_PORT	0x10 // force re-enumeration of this device
+#define USBIF_F_DIRECT_DATA	0x20 // request contains data directly inline
 
 /*
  * Maximum scatter/gather segments per request.
@@ -90,7 +92,10 @@ struct usbif_request {
     uint8_t             flags;
     uint16_t            nr_packets;   /* number of ISO packets */
     uint32_t            startframe;
-    grant_ref_t         gref[USBIF_MAX_SEGMENTS_PER_REQUEST];
+    union {
+        grant_ref_t     gref[USBIF_MAX_SEGMENTS_PER_REQUEST];
+        uint8_t         data[sizeof(grant_ref_t)*USBIF_MAX_SEGMENTS_PER_REQUEST];
+    } u;
     uint32_t            pad;
 };
 typedef struct usbif_request usbif_request_t;
@@ -118,6 +123,7 @@ struct usbif_response {
     usbif_request_len_t actual_length;
     uint32_t            data;
     int16_t             status;          /* USBIF_RSP_???       */
+    uint32_t            pad;
 };
 typedef struct usbif_response usbif_response_t;
 
