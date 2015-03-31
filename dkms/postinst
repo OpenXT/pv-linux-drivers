@@ -35,13 +35,6 @@ do_dkms_stage()
 }
 
 pushd ${SRCS}
-# TODO stubbed out for now, may use it for xc-vusb
-#    initrd_mod_file=/etc/initramfs-tools/modules
-#    if [[ -f "${initrd_mod_file}" ]]; then
-#	    for md in xc-netfront xc-blkfront xc-xen; do
-#	    	egrep -q "${md}\$" "${initrd_mod_file}" || sed -i "1i${md}" "${initrd_mod_file}"
-#	    done
-#    fi
     echo "${PACKAGE}-${VERSION} installing ..."
 
     do_dkms_stage add ${PACKAGE} ${VERSION}
