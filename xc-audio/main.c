@@ -22,8 +22,6 @@
  *
  */
 
-#include "../include/xen-dkms.h"
-
 #include <linux/init.h>
 #include <linux/err.h>
 #include <linux/platform_device.h>
@@ -33,6 +31,7 @@
 #include <linux/wait.h>
 #include <linux/hrtimer.h>
 #include <linux/math64.h>
+#include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/version.h>
 #include <sound/core.h>
@@ -97,7 +96,7 @@ uint64_t xc_xen_pv_get_time(void)
 #include <xen/interface/memory.h>
 #include <xen/interface/grant_table.h>
 #include <xen/interface/io/ring.h>
-#include <xen/time.h>
+#include "xen-time.h"
 
 #endif
 
@@ -231,7 +230,7 @@ struct snd_xc_audio {
 	int capture_source[MIXER_ADDR_LAST+1][2];       
 };
 
-static DEFINE_MUTEX(xennet_pm_mutex);
+static DEFINE_MUTEX(xenaudio_pm_mutex);
 
 void send_fe_cmd(enum xc_stream stream, 
 		 enum xc_cmd cmd, 
@@ -251,7 +250,7 @@ void send_fe_cmd(enum xc_stream stream,
 	fe_cmd.s_time = s_time;
 
 	ring_write(af_info.cmd_ring, &fe_cmd, sizeof(fe_cmd));
-	xc_notify_remote_via_irq(af_info.irq);
+	notify_remote_via_irq(af_info.irq);
 }
 
 #ifdef USE_CROSS_DOMAIN_TIME_DIFF
@@ -1172,11 +1171,11 @@ static int setup_audfront(struct xenbus_device *dev, struct audfront_info *info)
 	txs = (void *)get_zeroed_page(GFP_KERNEL);
 	if (!txs) {
 		err = -ENOMEM;
-		xc_xenbus_dev_fatal(dev, err, "allocating tx ring page");
+		xenbus_dev_fatal(dev, err, "allocating tx ring page");
 		goto fail;
 	}
 	af_info.shared_page = page_ref = txs;
-	err = xc_xenbus_grant_ring(dev, virt_to_mfn(txs));
+	err = xenbus_grant_ring(dev, virt_to_mfn(txs));
 	if (err < 0) {
 		free_page((unsigned long)txs);
 		goto fail;
@@ -1190,10 +1189,10 @@ static int setup_audfront(struct xenbus_device *dev, struct audfront_info *info)
 		xc_playback_page[i] = (void *)get_zeroed_page(GFP_KERNEL);
 		if (!xc_playback_page[i]) {
 			err = -ENOMEM;
-			xc_xenbus_dev_fatal(dev, err, "allocating tx ring page");
+			xenbus_dev_fatal(dev, err, "allocating tx ring page");
 			goto fail;
 		}
-		err = xc_xenbus_grant_ring(dev, virt_to_mfn(xc_playback_page[i]));
+		err = xenbus_grant_ring(dev, virt_to_mfn(xc_playback_page[i]));
 		if (err < 0) {
 			free_page((unsigned long)xc_playback_page[i]);
 			goto fail;
@@ -1208,10 +1207,10 @@ static int setup_audfront(struct xenbus_device *dev, struct audfront_info *info)
 		xc_capture_page[i] = (void *)get_zeroed_page(GFP_KERNEL);
 		if (!xc_capture_page[i]) {
 			err = -ENOMEM;
-			xc_xenbus_dev_fatal(dev, err, "allocating tx ring page");
+			xenbus_dev_fatal(dev, err, "allocating tx ring page");
 			goto fail;
 		}
-		err = xc_xenbus_grant_ring(dev, virt_to_mfn(xc_capture_page[i]));
+		err = xenbus_grant_ring(dev, virt_to_mfn(xc_capture_page[i]));
 		if (err < 0) {
 			free_page((unsigned long)xc_capture_page[i]);
 			goto fail;
@@ -1225,12 +1224,12 @@ static int setup_audfront(struct xenbus_device *dev, struct audfront_info *info)
 	info->cmd_ring = (struct ring_t *) get_zeroed_page(GFP_KERNEL);
 	if (!info->cmd_ring) {
 		err = -ENOMEM;
-		xc_xenbus_dev_fatal(dev, err, "allocating commands ring page");
+		xenbus_dev_fatal(dev, err, "allocating commands ring page");
 		goto fail;
 	}
 	ring_init(info->cmd_ring);
 
-	err = xc_xenbus_grant_ring(dev, virt_to_mfn(info->cmd_ring));
+	err = xenbus_grant_ring(dev, virt_to_mfn(info->cmd_ring));
 	if (err < 0) {
 		free_page((unsigned long)info->cmd_ring);
 		goto fail;
@@ -1241,14 +1240,14 @@ static int setup_audfront(struct xenbus_device *dev, struct audfront_info *info)
 	info->playback_be_info = (struct be_info *)&page_ref[400];
 	info->capture_be_info = (struct be_info *)&page_ref[500];
 
-	err = xc_xenbus_alloc_evtchn(dev, &info->evtchn);
+	err = xenbus_alloc_evtchn(dev, &info->evtchn);
 	if (err)
 		goto fail;
 #if defined(XC_HAS_STATIC_XEN) && ( LINUX_VERSION_CODE <= KERNEL_VERSION(3,7,0) )
 	err = bind_caller_port_to_irqhandler(info->evtchn, xenaud_interrupt,
 					     0, "Stefano Alsa Card", info);
 #else
-	err = xc_bind_evtchn_to_irqhandler(info->evtchn, xenaud_interrupt,
+	err = bind_evtchn_to_irqhandler(info->evtchn, xenaud_interrupt,
 					   0, "Stefano Alsa Card", info);
 #endif	
 	if (err < 0)
@@ -1267,21 +1266,23 @@ static void xenaud_disconnect_backend(struct audfront_info *info)
 
 	printk(KERN_ERR "SSSS %s \n", __FUNCTION__);
 	if (info->irq)
-		xc_unbind_from_irqhandler(info->irq, info);
+		unbind_from_irqhandler(info->irq, info);
 	info->evtchn = info->irq = 0;
+
+	/* TODO leaking the event channel! */
 
 	for (i = 0; i < N_AUD_BUFFER_PAGES; i++) {
 		if (playback_grefs[i] != GRANT_INVALID_REF)
-			xc_gnttab_end_foreign_access(playback_grefs[i], 0, (unsigned long)xc_playback_page[i]);
+			gnttab_end_foreign_access(playback_grefs[i], 0, (unsigned long)xc_playback_page[i]);
 		capture_grefs[i] = GRANT_INVALID_REF;
 		if (capture_grefs[i] != GRANT_INVALID_REF)
-			xc_gnttab_end_foreign_access(capture_grefs[i], 0, (unsigned long)xc_capture_page[i]);
+			gnttab_end_foreign_access(capture_grefs[i], 0, (unsigned long)xc_capture_page[i]);
 		capture_grefs[i] = GRANT_INVALID_REF;
 		
 	}
 
 	if (page_gref != GRANT_INVALID_REF) {
-		xc_gnttab_end_foreign_access(page_gref, 0, (unsigned long)af_info.shared_page);
+		gnttab_end_foreign_access(page_gref, 0, (unsigned long)af_info.shared_page);
 		page_gref = GRANT_INVALID_REF;
 	}
 }
@@ -1300,40 +1301,40 @@ static int talk_to_audback(struct xenbus_device *dev, struct audfront_info *info
 		goto out;
 
 again:
-	err = xc_xenbus_transaction_start(&xbt);
+	err = xenbus_transaction_start(&xbt);
 	if (err) {
-		xc_xenbus_dev_fatal(dev, err, "starting transaction");
+		xenbus_dev_fatal(dev, err, "starting transaction");
 		goto destroy_ring;
 	}
 
-	err = xc_xenbus_printf(xbt, dev->nodename, "page-ref", "%u",
+	err = xenbus_printf(xbt, dev->nodename, "page-ref", "%u",
 			       info->tx_ring_ref);
 	if (err) {
 		message = "writing tx ring-ref";
 		goto abort_transaction;
 	}
 
-	err = xc_xenbus_printf(xbt, dev->nodename,
+	err = xenbus_printf(xbt, dev->nodename,
 			       "event-channel", "%u", info->evtchn);
 	if (err) {
 		message = "writing event-channel";
 		goto abort_transaction;
 	}
 
-	err = xc_xenbus_transaction_end(xbt, 0);
+	err = xenbus_transaction_end(xbt, 0);
 	if (err) {
 		if (err == -EAGAIN)
 			goto again;
-		xc_xenbus_dev_fatal(dev, err, "completing transaction");
+		xenbus_dev_fatal(dev, err, "completing transaction");
 		goto destroy_ring;
 	}
 
-	xc_xenbus_switch_state(dev, XenbusStateInitialising);
+	xenbus_switch_state(dev, XenbusStateInitialising);
 	return 0;
 
 abort_transaction:
-	xc_xenbus_transaction_end(xbt, 1);
-	xc_xenbus_dev_fatal(dev, err, "%s", message);
+	xenbus_transaction_end(xbt, 1);
+	xenbus_dev_fatal(dev, err, "%s", message);
 destroy_ring:
 	xenaud_disconnect_backend(&af_info);
 out:
@@ -1343,7 +1344,7 @@ out:
 void audfront_close(struct xenbus_device *dev)
 {
 	xenaud_disconnect_backend(&af_info);
-	xc_xenbus_frontend_closed(dev);
+	xenbus_frontend_closed(dev);
 }
 
 /**
@@ -1352,8 +1353,8 @@ void audfront_close(struct xenbus_device *dev)
 static void audback_changed(struct xenbus_device *dev,
 			    enum xenbus_state backend_state)
 {
-	printk(KERN_ERR "BK state %s\n", xc_xenbus_strstate(backend_state));
-	printk(KERN_ERR "FE state %s\n", xc_xenbus_strstate(dev->state));
+	printk(KERN_ERR "BK state %s\n", xenbus_strstate(backend_state));
+	printk(KERN_ERR "FE state %s\n", xenbus_strstate(dev->state));
 
 	switch (backend_state) {
 	case XenbusStateUnknown:
@@ -1377,7 +1378,7 @@ static void audback_changed(struct xenbus_device *dev,
 			break;
 		printk(KERN_ERR "SSSS %s talking to back\n", __FUNCTION__);
 		talk_to_audback(dev, &af_info);
-		xc_xenbus_switch_state(dev, XenbusStateConnected);
+		xenbus_switch_state(dev, XenbusStateConnected);
 		alsa_card_xc_audio_init();
 		break;
 
@@ -1386,7 +1387,7 @@ static void audback_changed(struct xenbus_device *dev,
 		if (dev->state != XenbusStateClosed)
 			audfront_close(dev);
 		else
-			xc_xenbus_switch_state(dev, XenbusStateInitialising);
+			xenbus_switch_state(dev, XenbusStateInitialising);
 		break;
 	}
 }
@@ -1414,7 +1415,7 @@ static int __devexit fake_remove(struct xenbus_device *dev)
 
 	alsa_card_xc_audio_exit();
 
-	xc_xenbus_switch_state(dev, XenbusStateClosing);
+	xenbus_switch_state(dev, XenbusStateClosing);
 	xenaud_disconnect_backend(&af_info);
 	return 0;
 }
@@ -1422,7 +1423,7 @@ static int __devexit fake_remove(struct xenbus_device *dev)
 static struct xenbus_driver audfront_driver = {
 #if ( LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,0) )
 	.driver.name = "vsnd",
-	/* .owner = THIS_MODULE, */
+	.owner = THIS_MODULE,
 	.ids = audfront_ids,
 	.probe = fake_probe,
 	.remove = fake_remove,
@@ -1430,7 +1431,7 @@ static struct xenbus_driver audfront_driver = {
 	.otherend_changed = audback_changed,
 #else
 	.name = "vsnd",
-	/* .owner = THIS_MODULE, */
+	.owner = THIS_MODULE,
 	.ids = audfront_ids,
 	.probe = fake_probe,
 	.remove = __devexit_p(fake_remove),
@@ -1439,48 +1440,20 @@ static struct xenbus_driver audfront_driver = {
 #endif
 };
 
-static int audfront_freeze(void)
-{
-	mutex_lock(&xennet_pm_mutex);
-	printk(KERN_INFO "xc-audio: pm freeze event received, unregister audio device\n");
-	xc_xenbus_unregister_driver(&audfront_driver);
-	mutex_unlock(&xennet_pm_mutex);
-	return 0;
-}
-static int audfront_restore(void)
-{
-	int rc = 0;
-
-	mutex_lock(&xennet_pm_mutex);
-	printk(KERN_INFO "xc-audio: pm restore event received, register audio device \n");
-	rc = xenbus_register_frontend(&audfront_driver);
-	mutex_unlock(&xennet_pm_mutex);
-
-	return rc;
-}
-
-static struct xc_pm_callback xennet_pm = {
-	.freeze 	= audfront_freeze,
-	.restore 	= audfront_restore,
-};
-
 static int __init xc_audio_init(void)
 {
 
 	int rc = 0;
 
-	mutex_lock(&xennet_pm_mutex);
+	mutex_lock(&xenaudio_pm_mutex);
 
-#ifndef XC_HAS_STATIC_XEN
-	xc_register_erly_pm(&xennet_pm);
-#endif
 	rc = xenbus_register_frontend(&audfront_driver);
 	if (rc)
 		goto out;
 
-	printk(KERN_INFO "xen_netif initialized\n");
+	printk(KERN_INFO "xen_audio initialized\n");
 out:
-	mutex_unlock(&xennet_pm_mutex);
+	mutex_unlock(&xenaudio_pm_mutex);
 	return rc;
 }
 module_init(xc_audio_init);
@@ -1488,11 +1461,8 @@ module_init(xc_audio_init);
 
 static void __exit xc_audio_exit(void)
 {
-	mutex_lock(&xennet_pm_mutex);
-	xc_xenbus_unregister_driver(&audfront_driver);
-#ifndef XC_HAS_STATIC_XEN
-	xc_unregister_early_pm(&xennet_pm);
-#endif
-	mutex_unlock(&xennet_pm_mutex);
+	mutex_lock(&xenaudio_pm_mutex);
+	xenbus_unregister_driver(&audfront_driver);
+	mutex_unlock(&xenaudio_pm_mutex);
 }
 module_exit(xc_audio_exit);

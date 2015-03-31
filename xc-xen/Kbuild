@@ -1,3 +1,0 @@
-obj-m += xc-xen.o
-
-xc-xen-y := xen-module.o hcpage.o xen_evtchn.o platform-pci-unplug.o grant-table.o xenbus_client.o xenbus_comms.o xenbus_probe.o xenbus_probe_frontend.o xenbus_xs.o
