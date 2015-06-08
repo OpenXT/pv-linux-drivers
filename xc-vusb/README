@@ -1,0 +1,28 @@
+---------------------------------------------------------------------
+                                              _
+                                             | |
+             __  _____ ________   ___   _ ___| |__
+             \ \/ / __|______\ \ / / | | / __| '_ \
+              >  < (__        \ V /| |_| \__ \ |_) |
+             /_/\_\___|        \_/  \__,_|___/_.__/
+---------------------------------------------------------------------
+
+This is the (currently) experimental new Linux PV USB front end driver that
+works with the back end driver in OpenXT. The driver is not currently built
+or installed by the DKMS package though the driver is reasonably functional.
+
+What works:
+ - Module loading, registration with xenbus.
+ - Starting with or plugging in devices.
+ - Multiple simultaneous devices.
+ - Most devices tried which use bulk or interrupt transfers.
+ - Device unplug or disconnect.
+
+What doesn't:
+ - Isochronous devices like cameras and microphones.
+ - Virtual HCD unloading.
+ - Sleep/resume.
+
+If you would like to take it out for a test drive, you can add it back into
+the DKMS and Makefiles. The patch add_xc_vusb.patch will put the needed bits
+back in place to allow you to build and install the xc-vusb driver.

@@ -1,1 +1,1 @@
-obj-m += xc-vusb-stub.o 
+obj-m += xc-vusb.o 
