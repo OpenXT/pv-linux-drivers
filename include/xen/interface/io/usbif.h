@@ -66,10 +66,10 @@
 
 #define USBIF_F_SHORTOK		0x01
 #define USBIF_F_RESET		0x02
-#define USBIF_F_ASAP		0x04 // start ISO request on next available frame
-#define USBIF_F_INDIRECT	0x08 // this request contains indirect segments 
-#define USBIF_F_CYCLE_PORT	0x10 // force re-enumeration of this device
-#define USBIF_F_DIRECT_DATA	0x20 // request contains data directly inline
+#define USBIF_F_ASAP		0x04 /* start ISO request on next available frame */
+#define USBIF_F_INDIRECT	0x08 /* this request contains indirect segments */
+#define USBIF_F_CYCLE_PORT	0x10 /* force re-enumeration of this device */
+#define USBIF_F_DIRECT_DATA	0x20 /* request contains data directly inline */
 
 /*
  * Maximum scatter/gather segments per request.
