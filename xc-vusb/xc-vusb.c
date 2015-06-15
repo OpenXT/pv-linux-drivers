@@ -676,6 +676,7 @@ vusb_hcd_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 	struct vusb_vhcd *vhcd;
 	unsigned long flags;
 	int ret;
+	bool found = false;
 	struct vusb_rh_port *vport;
 	struct vusb_device *vdev;
 	struct vusb_urbp *urbp;
@@ -735,11 +736,13 @@ vusb_hcd_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 	 * It seems this would be OK - it seems it is unlikely the core would
 	 * call dequeue on the same URB it was currently calling enqueue for. */
 	list_for_each_entry(urbp, &vdev->pending_list, urbp_list) {
-		if (urbp->urb == urb)
+		if (urbp->urb == urb) {
+			found = true;
 			break;
+		}
 	}
 
-	while (urbp) {
+	while (found) {
 		/* Found it in the pending list, see if it is in state 1 and
 		 * and get rid of it right here. */
 		if (urbp->state != VUSB_URBP_SENT) {
@@ -1253,7 +1256,12 @@ vusb_flush_ring(struct vusb_device *vdev)
 
 	RING_PUSH_REQUESTS_AND_CHECK_NOTIFY(&vdev->ring, notify);
 
-	if (notify)
+	/* TODO see OXT-311. The backend is not properly checking for more work
+	 * to do so it currently unconditionally notifying. This means the
+	 * front end must do this for now. This explains a bunch of hangs and
+	 * timeouts.
+	 */
+	/*if (notify)*/
 		notify_remote_via_irq(vdev->irq);
 }
 
@@ -1672,11 +1680,10 @@ vusb_urb_common_finish(struct vusb_device *vdev, struct vusb_urbp *urbp,
 	struct urb *urb = urbp->urb;
 
 	/* If the URB was canceled and shot down in the backend then
-	 * just set an error code and don't bother setting values. */
-	if (urbp->state == VUSB_URBP_CANCEL) {
-		urb->status = -ECANCELED;
+	 * just use the error code set in dequeue and don't bother
+	 * setting values. */
+	if (urbp->state == VUSB_URBP_CANCEL)
 		return;
-	}
 
 	urb->status = vusb_status_to_errno(urbp->rsp.status);
 	if (unlikely(urb->status)) {
@@ -2470,6 +2477,7 @@ vusb_start_device(struct vusb_device *vdev)
 
 	/* The rest are vdev operations with the device lock */
 	spin_lock_irqsave(&vdev->lock, flags);
+
 	vdev->speed = (unsigned int)-1;
 
 	ret = vusb_put_internal_request(vdev, VUSB_CMD_SPEED, 0);
