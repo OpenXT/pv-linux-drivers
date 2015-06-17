@@ -418,7 +418,7 @@ vusb_set_link_state(struct vusb_rh_port *vport)
 	dprintk(D_STATE, "SLS: Port index %u status 0x%08x\n",
 			vport->port, newstatus);
 
-	if (vport->present) {
+	if (vport->present && !vport->closing) {
 		newstatus |= (USB_PORT_STAT_CONNECTION) |
 					vusb_speed_to_port_stat(vport->vdev.speed);
 	}
@@ -1884,7 +1884,7 @@ vusb_send_control_urb(struct vusb_device *vdev, struct vusb_urbp *urbp)
 	ctrl_value = le16_to_cpu(ctrl->wValue);
 
 	dprintk(D_URB2, "Send Control URB dev: %u in: %u cmd: 0x%x 0x%02x\n",
-		usb_pipedevice(urb->pipe), ((bRequestType & USB_DIR_IN) != 0),
+		usb_pipedevice(urb->pipe), ((ctrl->bRequestType & USB_DIR_IN) != 0),
 		ctrl->bRequest, ctrl->bRequestType);
 	dprintk(D_URB2, "SETUP packet, tb_len=%d\n",
 		urb->transfer_buffer_length);
@@ -2556,8 +2556,18 @@ vusb_destroy_device(struct vusb_device *vdev)
 
 	vport->closing = 1; /* Going away now... */
 
+	/* Final vHCD operations on port - shut it down */
+	vusb_set_link_state(vport);
+
+	if (vhcd->hcd_state != VUSB_HCD_INACTIVE)
+		update_rh = true;
+
 	spin_unlock_irqrestore(&vhcd->lock, flags);
 	
+	/* Update root hub status, device gone, port empty */
+	if (update_rh)
+		usb_hcd_poll_rh_status(vhcd_to_hcd(vhcd));
+
 	dprintk(D_PORT1, "Remove device from port %u\n", vdev->port);
 
 	/* Main halt call, shut everything down */
@@ -2589,20 +2599,10 @@ vusb_destroy_device(struct vusb_device *vdev)
 		vusb_urbp_release(vhcd, pos);
 	}
 
+	/* Finally return the vport for reuse */
 	spin_lock_irqsave(&vhcd->lock, flags);
-
-	/* Final vHCD operations on port */
-	vusb_set_link_state(vport);
 	vusb_put_vport(vhcd, vport);
-
-	if (vhcd->hcd_state != VUSB_HCD_INACTIVE)
-		update_rh = true;
-
 	spin_unlock_irqrestore(&vhcd->lock, flags);
-
-	/* Update root hub status, device gone, port empty */
-	if (update_rh)
-		usb_hcd_poll_rh_status(vhcd_to_hcd(vhcd));
 }
 
 /****************************************************************************/
