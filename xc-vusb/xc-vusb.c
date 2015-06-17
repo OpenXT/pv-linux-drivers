@@ -29,7 +29,6 @@
 /* TODO
  * Use DMA buffers
  * Handle errors on internal cmds
- * Fix reset logic and locking - and flag/type inconsistencies
  * Deal with USBIF_RSP_USB_DEVRMVD
  * Sleep/resume and recover functionality
  * Refactor vusb_put_urb and vusb_put_isochronous_urb into one function.
@@ -249,7 +248,6 @@ struct vusb_vhcd {
 };
 
 static struct platform_device *vusb_platform_device = NULL;
-static DEFINE_MUTEX(vusb_xen_pm_mutex);
 
 static bool
 vusb_start_processing_caller(struct vusb_rh_port *vport,
@@ -2743,7 +2741,6 @@ vusb_xen_init(void)
 {
 	int rc = 0;
 
-	mutex_lock(&vusb_xen_pm_mutex);
 	/* TODO this will ultimately go away */
 	if (!xen_hvm_domain()) {
 		rc = -ENODEV;
@@ -2756,16 +2753,7 @@ vusb_xen_init(void)
 
 	iprintk("xen_usbif initialized\n");
 out:
-	mutex_unlock(&vusb_xen_pm_mutex);
 	return rc;
-}
-
-static void
-vusb_xen_unregister(void)
-{
-	mutex_lock(&vusb_xen_pm_mutex);
-	xenbus_unregister_driver(&vusb_usbfront_driver);
-	mutex_unlock(&vusb_xen_pm_mutex);
 }
 
 /****************************************************************************/
@@ -2813,7 +2801,7 @@ vusb_platform_probe(struct platform_device *pdev)
 	if (!hcd)
 		return -ENOMEM;
 
-	/* Indicate the USB stack that both Super and Full Speed are supported */
+	/* Indicate the USB stack that both High and Full speed are supported */
 	hcd->has_tt = 1;
 
 	vhcd = hcd_to_vhcd(hcd);
@@ -2856,8 +2844,11 @@ vusb_platform_remove(struct platform_device *pdev)
 
 	hcd = platform_get_drvdata(pdev);
 
+	/* TODO this needs work */
+	/*vusb_platform_cleanup(vhcd);*/
+
 	/* Unregister from xenbus first */
-	vusb_xen_unregister();
+	xenbus_unregister_driver(&vusb_usbfront_driver);
 
 	/* A warning will result: "IRQ 0 already free". It seems the Linux
 	 * kernel doesn't set hcd->irq to -1 when IRQ is not enabled for a USB
@@ -2867,8 +2858,6 @@ vusb_platform_remove(struct platform_device *pdev)
 	usb_remove_hcd(hcd);
 
 	vhcd = hcd_to_vhcd(hcd);
-
-	vusb_platform_cleanup(vhcd);
 
 	usb_put_hcd(hcd);
 
@@ -2955,14 +2944,16 @@ static void
 vusb_cleanup(void)
 {
 	iprintk("clean up\n");
-	platform_device_unregister(vusb_platform_device);
-	platform_driver_unregister(&vusb_platform_driver);
+	if (vusb_platform_device) {
+		platform_device_unregister(vusb_platform_device);
+		platform_driver_unregister(&vusb_platform_driver);
+	}
 }
 
 static int __init
 vusb_init(void)
 {
-	int r = 0;
+	int ret;
 
 	iprintk("OpenXT USB host controller\n");
 
@@ -2971,32 +2962,34 @@ vusb_init(void)
 		return -ENODEV;
 	}
 
-	vusb_platform_device = platform_device_alloc(VUSB_PLATFORM_DRIVER_NAME, -1);
+	ret = platform_driver_register(&vusb_platform_driver);
+	if (ret < 0) {
+		eprintk("Unable to register the platform\n");
+		goto fail_platform_driver;
+	}
+
+	vusb_platform_device =
+		platform_device_alloc(VUSB_PLATFORM_DRIVER_NAME, -1);
 	if (!vusb_platform_device) {
 		eprintk("Unable to allocate platform device\n");
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto fail_platform_device1;
 	}
 
-	r = platform_driver_register(&vusb_platform_driver);
-	if (r < 0) {
-		eprintk("Unable to register the platform\n");
-		goto err_driver_register;
-	}
-
-	r = platform_device_add(vusb_platform_device);
-	if (r < 0) {
+	ret = platform_device_add(vusb_platform_device);
+	if (ret < 0) {
 		eprintk("Unable to add the platform\n");
-		goto err_add_hcd;
+		goto fail_platform_device2;
 	}
 
 	return 0;
 
-err_add_hcd:
-	platform_driver_unregister(&vusb_platform_driver);
-err_driver_register:
+fail_platform_device2:
 	platform_device_put(vusb_platform_device);
-
-	return r;
+fail_platform_device1:
+	platform_driver_unregister(&vusb_platform_driver);
+fail_platform_driver:
+	return ret;
 }
 
 module_init(vusb_init);
