@@ -2736,48 +2736,30 @@ static struct xenbus_driver vusb_usbfront_driver = {
 	.otherend_changed = vusb_usbback_changed,
 };
 
-static int
-vusb_xen_init(void)
-{
-	int rc = 0;
-
-	/* TODO this will ultimately go away */
-	if (!xen_hvm_domain()) {
-		rc = -ENODEV;
-		goto out;
-	}
-
-	rc = xenbus_register_frontend(&vusb_usbfront_driver);
-	if (rc)
-		goto out;
-
-	iprintk("xen_usbif initialized\n");
-out:
-	return rc;
-}
-
 /****************************************************************************/
 /* VUSB Platform Device & Driver                                            */
 
 static void
-vusb_platform_cleanup(struct vusb_vhcd *vhcd)
+vusb_platform_sanity_disable(struct vusb_vhcd *vhcd)
 {
 	unsigned long flags;
 	u16 i = 0;
 
-	dprintk(D_PM, "Clean up the worker\n");
+	iprintk("Disable vHCD with sanity check.\n");
 
 	spin_lock_irqsave(&vhcd->lock, flags);
 
-	/* Unplug all USB devices */
+	/* Check for any vUSB devices - lotsa trouble if there are any */
 	for (i = 0; i < VUSB_PORTS; i++) {
-		if (vhcd->vrh_ports[i].closing || !vhcd->vrh_ports[i].present)
+		if (!vhcd->vrh_ports[i].present)
 			continue;
 
-		/* TODO will this cause the backend to go to closed? */
-		xenbus_switch_state(vhcd->vrh_ports[i].vdev.xendev, XenbusStateClosed);
+		/* Active vUSB device, now in a world of pain */
+		eprintk("Danger! Shutting down while"
+			" xenbus device at %d is present!!\n", i);
 	}
 
+	/* Shut down the vHCD */
 	vhcd->hcd_state = VUSB_HCD_INACTIVE;
 
 	spin_unlock_irqrestore(&vhcd->lock, flags);
@@ -2814,9 +2796,11 @@ vusb_platform_probe(struct platform_device *pdev)
 		goto err_add;
 
 	/* vHCD is up, now initialize this device for xenbus */
-	ret = vusb_xen_init();
+	ret = xenbus_register_frontend(&vusb_usbfront_driver);
 	if (ret)
 		goto err_xen;
+
+	iprintk("xen_usbif initialized\n");
 
 	dprintk(D_MISC, "<vusb_hcd_probe %d\n", ret);
 
@@ -2839,13 +2823,12 @@ err_add:
 static int
 vusb_platform_remove(struct platform_device *pdev)
 {
-	struct usb_hcd *hcd;
-	struct vusb_vhcd *vhcd;
+	struct usb_hcd *hcd = platform_get_drvdata(pdev);
+	struct vusb_vhcd *vhcd = hcd_to_vhcd(hcd);
 
-	hcd = platform_get_drvdata(pdev);
-
-	/* TODO this needs work */
-	/*vusb_platform_cleanup(vhcd);*/
+	/* Sanity check the state of the platform. Unloading this module
+	 * should only be done for debugging and development purposes. */
+	vusb_platform_sanity_disable(vhcd);
 
 	/* Unregister from xenbus first */
 	xenbus_unregister_driver(&vusb_usbfront_driver);
@@ -2856,8 +2839,6 @@ vusb_platform_remove(struct platform_device *pdev)
 	hcd->irq = -1;
 
 	usb_remove_hcd(hcd);
-
-	vhcd = hcd_to_vhcd(hcd);
 
 	usb_put_hcd(hcd);
 
@@ -2871,7 +2852,6 @@ vusb_platform_freeze(struct device *dev)
 	struct platform_device *pdev = to_platform_device(dev);
 	struct usb_hcd *hcd;
 	struct vusb_vhcd *vhcd;
-	int ret = 0;
 	unsigned long flags;
 
 	iprintk("HCD freeze\n");
@@ -2884,15 +2864,14 @@ vusb_platform_freeze(struct device *dev)
 
 	if (vhcd->rh_state == VUSB_RH_RUNNING) {
 		wprintk("Root hub isn't suspended!\n");
-		ret = -EBUSY;
-	} else
-		clear_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags);
+		vhcd->hcd_state = VUSB_HCD_INACTIVE;
+		return -EBUSY;
+	}
+
+	clear_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags);
 	spin_unlock_irqrestore(&vhcd->lock, flags);
 
-	if (ret == 0)
-		vusb_platform_cleanup(vhcd);
-
-	return ret;
+	return 0;
 }
 
 static int
@@ -2940,11 +2919,32 @@ static struct platform_driver vusb_platform_driver = {
 /****************************************************************************/
 /* Module Init & Cleanup                                                    */
 
+static bool module_ref_counted = false;
+
+static ssize_t vusb_enable_unload(struct device_driver *drv, const char *buf,
+				size_t count)
+{
+	/* In general we don't want this module to ever be unloaded since
+	 * it is highly unsafe when there are active xenbus devices running
+	 * in this module. This sysfs attribute allows this module to be
+	 * unloaded for development and debugging work */
+	if (module_ref_counted) {
+		module_put(THIS_MODULE);
+		module_ref_counted = false;
+	} 
+
+        return count;
+}
+
+static DRIVER_ATTR(enable_unload, S_IWUSR, NULL, vusb_enable_unload);
+
 static void
 vusb_cleanup(void)
 {
 	iprintk("clean up\n");
 	if (vusb_platform_device) {
+		driver_remove_file(&vusb_platform_driver.driver,
+				&driver_attr_enable_unload);
 		platform_device_unregister(vusb_platform_device);
 		platform_driver_unregister(&vusb_platform_driver);
 	}
@@ -2982,8 +2982,27 @@ vusb_init(void)
 		goto fail_platform_device2;
 	}
 
+	ret = driver_create_file(&vusb_platform_driver.driver,
+				&driver_attr_enable_unload);
+	if (ret < 0) {
+		eprintk("Unable to add driver attr\n");
+		goto fail_platform_device3;
+	}
+
+	if (!try_module_get(THIS_MODULE)) {
+		eprintk("Failed to get module ref count\n");
+		ret = -ENODEV;
+		goto fail_driver_create_file;
+	}
+	module_ref_counted = true;
+
 	return 0;
 
+fail_driver_create_file:
+	driver_remove_file(&vusb_platform_driver.driver,
+			&driver_attr_enable_unload);
+fail_platform_device3:
+        platform_device_del(vusb_platform_device);
 fail_platform_device2:
 	platform_device_put(vusb_platform_device);
 fail_platform_device1:
