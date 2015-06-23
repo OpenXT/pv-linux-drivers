@@ -1,0 +1,4 @@
+openxt-pv-vusb: extended-description-is-empty
+openxt-pv-vusb: changelog-file-missing-in-native-package
+openxt-pv-vusb: copyright-file-is-symlink
+openxt-pv-vusb: copyright-without-copyright-notice

@@ -1,6 +1,5 @@
-#!/bin/sh
 #
-# Copyright (c) 2012 Citrix Systems, Inc.
+# Copyright (c) 2013 Citrix Systems, Inc.
 # 
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -17,29 +16,31 @@
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #
 
-NAME=xenbus-s3-fix
-VERSION=1.0
+ifneq ($(KERNELRELEASE),)
+# kbuild part of makefile
+ifneq ($(FROM_DKMS),y)
+include Kbuild
+else
+KDIR := /lib/modules/${KVERSION}/build
+ENOSTDINC_FLAGS := -I$(CURDIR)/include
 
-set -e
-
-case "$1" in
-    remove|upgrade|deconfigure)
-      if [  "`dkms status -m $NAME`" ]; then
-         dkms remove -m $NAME -v $VERSION --all
-      fi
-    ;;
-
-    failed-upgrade)
-    ;;
-
-    *)
-        echo "prerm called with unknown argument \`$1'" >&2
-        exit 1
-    ;;
-esac
+mdkms:
+	make -C $(KDIR) FROM_DKMS=n NOSTDINC_FLAGS="$(ENOSTDINC_FLAGS)" M=$(CURDIR) modules EXTRA_CFLAGS="-g -O2"
+clean:
+	make -C $(KDIR) FROM_DKMS=n M=$(CURDIR) clean
+endif
+else
 
 
+KVERSION ?= $(shell uname -r)
 
-exit 0
+KDIR := /lib/modules/${KVERSION}/build
+export NOSTDINC_FLAGS := -I$(CURDIR)/include
 
+all:
+	make -C $(KDIR) V=1 M=$(CURDIR) modules EXTRA_CFLAGS="-g -O2"
 
+clean:
+	make -C $(KDIR) M=$(CURDIR) clean
+
+endif
