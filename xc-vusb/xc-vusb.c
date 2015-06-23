@@ -2648,8 +2648,13 @@ vusb_usbback_changed(struct xenbus_device *dev, enum xenbus_state backend_state)
 		break;
 	case XenbusStateInitialising:
 	case XenbusStateInitialised:
+	/* These states appeared some time back in the 2.6 days, not entirely
+	 * clear what kernels they are in but this breaks Debian 6. Since they
+	 * are not used anyway, just def them out in old kernels. */
+#if ( LINUX_VERSION_CODE > KERNEL_VERSION(2,6,32) )
 	case XenbusStateReconfiguring:
 	case XenbusStateReconfigured:
+#endif
 		break;
 	case XenbusStateConnected:
 		if (vusb_start_device(vdev)) {
@@ -2720,11 +2725,18 @@ static struct xenbus_device_id vusb_usbfront_ids[] = {
 };
 
 static struct xenbus_driver vusb_usbfront_driver = {
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,3,0))
+	/* In general, this is the kernel version where the switch over
+	 * happened except for Debian 6's kernel which has both.. */
 	.name = "xc-vusb",
 	.owner = THIS_MODULE,
+#else
+	.driver.name = "xc-vusb",
+	.driver.owner = THIS_MODULE,
+#endif
 	.ids = vusb_usbfront_ids,
 	.probe = vusb_usbfront_probe,
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,8,0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,0))
 	.remove = vusb_xenusb_remove,
 #else
 	.remove = __devexit_p(vusb_xenusb_remove),
@@ -2732,7 +2744,6 @@ static struct xenbus_driver vusb_usbfront_driver = {
 
 	.suspend = vusb_usbfront_suspend,
 	.resume = vusb_usbfront_resume,
-
 	.otherend_changed = vusb_usbback_changed,
 };
 

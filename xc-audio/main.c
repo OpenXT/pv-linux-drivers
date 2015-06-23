@@ -1368,8 +1368,14 @@ static void audback_changed(struct xenbus_device *dev,
 		break;
 	case XenbusStateInitialising:
 	case XenbusStateInitialised:
+	/* These states appeared some time back in the 2.6 days, not entirely
+	 * clear what kernels they are in but this breaks Debian 6. Since they
+	 * are not used anyway, just def them out in old kernels.
+	 */
+#if ( LINUX_VERSION_CODE > KERNEL_VERSION(2,6,32) )
 	case XenbusStateReconfiguring:
 	case XenbusStateReconfigured:
+#endif
 	case XenbusStateConnected:
 		break;
 
@@ -1421,23 +1427,24 @@ static int __devexit fake_remove(struct xenbus_device *dev)
 }
 
 static struct xenbus_driver audfront_driver = {
-#if ( LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,0) )
-	.driver.name = "vsnd",
-	.owner = THIS_MODULE,
-	.ids = audfront_ids,
-	.probe = fake_probe,
-	.remove = fake_remove,
-	.resume = audfront_resume,
-	.otherend_changed = audback_changed,
-#else
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,3,0))
+	/* In general, this is the kernel version where the switch over
+	 * happened except for Debian 6's kernel which has both.. */
 	.name = "vsnd",
 	.owner = THIS_MODULE,
+#else
+	.driver.name = "vsnd",
+	.driver.owner = THIS_MODULE,
+#endif
 	.ids = audfront_ids,
 	.probe = fake_probe,
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3,7,0))
+	.remove = fake_remove,
+#else
 	.remove = __devexit_p(fake_remove),
+#endif
 	.resume = audfront_resume,
 	.otherend_changed = audback_changed,
-#endif
 };
 
 static int __init xc_audio_init(void)
