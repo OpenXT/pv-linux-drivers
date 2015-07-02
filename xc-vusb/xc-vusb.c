@@ -29,7 +29,6 @@
 /* TODO
  * Use DMA buffers
  * Handle errors on internal cmds
- * Deal with USBIF_RSP_USB_DEVRMVD
  * Sleep/resume and recover functionality
  * Refactor vusb_put_urb and vusb_put_isochronous_urb into one function.
  * Add branch prediction
@@ -2648,6 +2647,7 @@ vusb_usbback_changed(struct xenbus_device *dev, enum xenbus_state backend_state)
 		break;
 	case XenbusStateInitialising:
 	case XenbusStateInitialised:
+	case XenbusStateInitWait:
 	/* These states appeared some time back in the 2.6 days, not entirely
 	 * clear what kernels they are in but this breaks Debian 6. Since they
 	 * are not used anyway, just def them out in old kernels. */
@@ -2661,12 +2661,9 @@ vusb_usbback_changed(struct xenbus_device *dev, enum xenbus_state backend_state)
 			printk(KERN_ERR "failed to start frontend, aborting!\n");
 			xenbus_switch_state(dev, XenbusStateClosed);
 			vusb_destroy_device(vdev);
-		}
-		break;
-	case XenbusStateInitWait:
-		if (dev->state != XenbusStateInitialising && dev->state != XenbusStateClosed)
 			break;
-		/* Frontend drives the backend from InitWait to Connected */
+		}
+		/* Front end is now connected */
 		xenbus_switch_state(dev, XenbusStateConnected);
 		break;
 	case XenbusStateClosing:
