@@ -1,0 +1,10 @@
+Package: xenclient-pv-vusb
+Version: 1.0
+Maintainer: OpenXT Community
+Section: OpenXT
+License: GPLv2
+Installed-Size: 1000
+Architecture: all
+Depends: linux-headers-generic | linux-headers, dkms (>= 1.95), autoconf, gcc, libtool
+Priority: optional
+Description: OpenXT PV USB Driver

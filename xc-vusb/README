@@ -17,12 +17,13 @@ What works:
  - Multiple simultaneous devices.
  - Most devices tried which use bulk or interrupt transfers.
  - Device unplug or disconnect.
+ - Isochronous devices like cameras and microphones.
+ - Virtual HCD unloading is prevented but can be overriden.
 
 What doesn't:
- - Isochronous devices like cameras and microphones.
- - Virtual HCD unloading.
  - Sleep/resume.
 
-If you would like to take it out for a test drive, you can add it back into
-the DKMS and Makefiles. The patch add_xc_vusb.patch will put the needed bits
-back in place to allow you to build and install the xc-vusb driver.
+If you would like to take it out for a test drive, you can build it in a
+target VM using the documentation here:
+
+https://github.com/OpenXT/openxt/wiki/PV-Linux-Drivers

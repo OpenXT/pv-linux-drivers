@@ -1,0 +1,4 @@
+openxt-pv-audio: extended-description-is-empty
+openxt-pv-audio: changelog-file-missing-in-native-package
+openxt-pv-audio: copyright-file-is-symlink
+openxt-pv-audio: copyright-without-copyright-notice
