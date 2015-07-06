@@ -1,0 +1,9 @@
+Package: xenmou-dkms
+Version: 2.0
+Architecture: all
+Maintainer:  Citrix Systems <customerservice@citrix.com>
+Depends: dkms (>= 1.95), linux-image-virtual
+Section: misc
+Priority: optional
+Description: XenMou driver in DKMS format.
+Installed-Size: 1000
