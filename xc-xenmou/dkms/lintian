@@ -1,4 +1,4 @@
-xenmou-dkms: extended-description-is-empty
-xenmou-dkms: changelog-file-missing-in-native-package
-xenmou-dkms: copyright-file-is-symlink
-xenmou-dkms: copyright-without-copyright-notice
+openxt-pv-xenmou: extended-description-is-empty
+openxt-pv-xenmou: changelog-file-missing-in-native-package
+openxt-pv-xenmou: copyright-file-is-symlink
+openxt-pv-xenmou: copyright-without-copyright-notice
