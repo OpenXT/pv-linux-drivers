@@ -908,8 +908,14 @@ static int __devinit snd_xc_audio_probe(struct platform_device *devptr)
 
 	printk(KERN_ERR "%s:%d\n", __FUNCTION__, __LINE__);
 
+#if ( LINUX_VERSION_CODE < KERNEL_VERSION(3,15,0) )
 	err = snd_card_create(index[dev], id[dev], THIS_MODULE,
 			      sizeof(struct snd_xc_audio), &card);
+#else
+	/* Parent device set below... */
+	err = snd_card_new(NULL, index[dev], id[dev], THIS_MODULE,
+                              sizeof(struct snd_xc_audio), &card);
+#endif
 	if (err < 0)
 		return err;
 	xc_audio = card->private_data;
