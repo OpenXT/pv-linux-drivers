@@ -1,0 +1,10 @@
+Package: xenmou-dkms
+Version: 1.0
+Architecture: all
+Maintainer: OpenXT Community
+Section: OpenXT
+License: GPLv2
+Depends: dkms (>= 1.95), linux-image-virtual
+Priority: optional
+Description: XenMou driver in DKMS format.
+Installed-Size: 1000
