@@ -673,7 +673,7 @@ vusb_hcd_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 	struct vusb_vhcd *vhcd;
 	unsigned long flags;
 	int ret;
-	bool found = false;
+	bool found = false, skip = false;
 	struct vusb_rh_port *vport;
 	struct vusb_device *vdev;
 	struct vusb_urbp *urbp;
@@ -741,9 +741,10 @@ vusb_hcd_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 
 	while (found) {
 		/* Found it in the pending list, see if it is in state 1 and
-		 * and get rid of it right here. */
+		 * and get rid of it right here and can skip processing. */
 		if (urbp->state != VUSB_URBP_SENT) {
 			vusb_urbp_queue_release(vdev, urbp);
+			skip = true;
 			break;
 		}
 
@@ -767,8 +768,9 @@ vusb_hcd_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 
 	spin_unlock_irqrestore(&vdev->lock, flags);
 
-	/* Drive processing requests and responses */
-	vusb_process(vdev, NULL);
+	/* Drive processing requests and responses if needed */
+	if (!skip)
+		vusb_process(vdev, NULL);
 
 	vusb_stop_processing(vport);
 
@@ -1594,9 +1596,7 @@ static void
 vusb_urbp_release(struct vusb_vhcd *vhcd, struct vusb_urbp *urbp)
 {
 	struct urb *urb = urbp->urb;
-
-	/* Notify USB stack that the URB is finished and release it. This
-	 * has to be done outside the all locks. */
+	unsigned long flags;
 
 #ifdef VUSB_DEBUG
 	if (urb->status)
@@ -1608,7 +1608,13 @@ vusb_urbp_release(struct vusb_vhcd *vhcd, struct vusb_urbp *urbp)
 	if (urbp->iso_packet_info)
 		kfree(urbp->iso_packet_info);
 	kfree(urbp);
+
+	/* Now to be more specific, the first function must be called holding
+	 * the HCDs private lock, the second must not because it calls the
+	 * completion routine of the driver that owns the URB. */
+	spin_lock_irqsave(&vhcd->lock, flags);
 	usb_hcd_unlink_urb_from_ep(vhcd_to_hcd(vhcd), urb);
+	spin_unlock_irqrestore(&vhcd->lock, flags);
 	usb_hcd_giveback_urb(vhcd_to_hcd(vhcd), urb, urb->status);
 }
 
@@ -1822,7 +1828,7 @@ vusb_urb_finish(struct vusb_device *vdev, struct vusb_urbp *urbp)
 
 	shadow = &vdev->shadows[urbp->rsp.id];
 
-		in = usb_urb_dir_in(urbp->urb) ? true : false;
+	in = usb_urb_dir_in(urbp->urb) ? true : false;
 
 	switch (type) {
 	case PIPE_CONTROL:
@@ -2058,13 +2064,9 @@ vusb_port_work_handler(struct work_struct *work)
 static void
 vusb_process(struct vusb_device *vdev, struct vusb_urbp *urbp)
 {
-	struct vusb_vhcd *vhcd = vusb_vhcd_by_vdev(vdev);
 	struct vusb_urbp *pos;
 	struct vusb_urbp *next;
-	struct list_head tmp;
 	unsigned long flags;
-
-	INIT_LIST_HEAD(&tmp);
 
 	spin_lock_irqsave(&vdev->lock, flags);
 
@@ -2084,12 +2086,32 @@ vusb_process(struct vusb_device *vdev, struct vusb_urbp *urbp)
 		vusb_send_urb(vdev, pos);
 	}
 
+	spin_unlock_irqrestore(&vdev->lock, flags);
+}
+
+static void
+vusb_release(struct vusb_device *vdev)
+{
+	struct vusb_vhcd *vhcd = vusb_vhcd_by_vdev(vdev);
+	struct vusb_urbp *pos;
+	struct vusb_urbp *next;
+	struct list_head tmp;
+	unsigned long flags;
+
+	INIT_LIST_HEAD(&tmp);
+
+	spin_lock_irqsave(&vdev->lock, flags);
+
 	/* Copy off any urbps on the release list that need releasing */
 	list_splice_init(&vdev->release_list, &tmp);
 
 	spin_unlock_irqrestore(&vdev->lock, flags);
 
-	/* Clean them up outside the lock */
+	/* If there are any URBs to release, they have to be cleaned up in the
+	 * work item callback. Calls to usb_hcd_giveback_urb cannot be called
+	 * within calls made by the enqueue/dequeue HCD callbacks. This can
+	 * lead to deadlocks in the URB completion routines. The call to
+	 * vusb_urbp_release must be made outside of any locks. */
 	list_for_each_entry_safe(pos, next, &tmp, urbp_list) {
 		vusb_urbp_release(vhcd, pos);
 	}
@@ -2104,8 +2126,11 @@ vusb_device_work_handler(struct work_struct *work)
 	if (!vusb_start_processing(vport))
 		return;
 
-	/* Start request processing again */
+	/* Start request/response processing again */
 	vusb_process(vdev, NULL);
+
+	/* Release any URBs hangin out on the release list */
+	vusb_release(vdev);
 
 	vusb_stop_processing(vport);
 }
