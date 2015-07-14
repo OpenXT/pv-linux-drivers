@@ -2709,6 +2709,10 @@ vusb_xenusb_remove(struct xenbus_device *dev)
 {
 	struct vusb_device *vdev = dev_get_drvdata(&dev->dev);
 
+	/* Did something else already destroy the vusb device? */
+	if (!vdev)
+		return 0;
+
 	iprintk("xen_usbif remove %s\n", dev->nodename);
 
 	vusb_destroy_device(vdev);
