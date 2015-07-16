@@ -254,7 +254,7 @@ vusb_start_processing_caller(struct vusb_rh_port *vport,
 static void
 vusb_stop_processing(struct vusb_rh_port *vport);
 static void
-vusb_process(struct vusb_device *vdev, struct vusb_urbp *urbp, bool is_work);
+vusb_process(struct vusb_device *vdev, struct vusb_urbp *urbp, bool more_work);
 static int
 vusb_put_internal_request(struct vusb_device *vdev,
 		enum vusb_internal_cmd cmd, u64 cancel_id);
@@ -262,7 +262,7 @@ static void
 vusb_port_work_handler(struct work_struct *work);
 static void
 vusb_urbp_queue_release(struct vusb_device *vdev, struct vusb_urbp *urbp,
-		bool is_work);
+		bool more_work);
 
 /****************************************************************************/
 /* Miscellaneous Routines                                                   */
@@ -660,7 +660,7 @@ vusb_hcd_urb_enqueue(struct usb_hcd *hcd, struct urb *urb, gfp_t mem_flags)
 	vdev = vusb_vdev_by_port(vhcd, urbp->port);
 	spin_unlock_irqrestore(&vhcd->lock, flags);
 
-	vusb_process(vdev, urbp, false);
+	vusb_process(vdev, urbp, true);
 
 	/* Finished processing */
 	vusb_stop_processing(vport);
@@ -744,7 +744,7 @@ vusb_hcd_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 		/* Found it in the pending list, see if it is in state 1 and
 		 * and get rid of it right here and can skip processing. */
 		if (urbp->state != VUSB_URBP_SENT) {
-			vusb_urbp_queue_release(vdev, urbp, false);
+			vusb_urbp_queue_release(vdev, urbp, true);
 			skip = true;
 			break;
 		}
@@ -771,7 +771,7 @@ vusb_hcd_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 
 	/* Drive processing requests and responses if needed */
 	if (!skip)
-		vusb_process(vdev, NULL, false);
+		vusb_process(vdev, NULL, true);
 
 	vusb_stop_processing(vport);
 
@@ -1621,7 +1621,7 @@ vusb_urbp_release(struct vusb_vhcd *vhcd, struct vusb_urbp *urbp)
 
 static void
 vusb_urbp_queue_release(struct vusb_device *vdev, struct vusb_urbp *urbp,
-		bool is_work)
+		bool more_work)
 {
 	/* Remove from the active urbp list and place it on the release list.
 	 * Called from the urb processing routines holding the vdev lock. */
@@ -1632,7 +1632,7 @@ vusb_urbp_queue_release(struct vusb_device *vdev, struct vusb_urbp *urbp,
 	/* If this is being called from work item processing, there is no
 	 * need to schedule more work since the work item processing will
 	 * also process the release_list as a last step. */
-	if (!is_work)
+	if (more_work)
 		schedule_work(&vdev->work);
 }
 
@@ -1825,7 +1825,7 @@ iso_err:
 }
 
 static void
-vusb_urb_finish(struct vusb_device *vdev, struct vusb_urbp *urbp, bool is_work)
+vusb_urb_finish(struct vusb_device *vdev, struct vusb_urbp *urbp, bool more_work)
 {
 	struct vusb_shadow *shadow;
 	struct urb *urb = urbp->urb;
@@ -1856,7 +1856,7 @@ vusb_urb_finish(struct vusb_device *vdev, struct vusb_urbp *urbp, bool is_work)
 
 	/* No matter what, move this urbp to the release list */
 	urbp->state = VUSB_URBP_DONE;
-	vusb_urbp_queue_release(vdev, urbp, is_work);
+	vusb_urbp_queue_release(vdev, urbp, more_work);
 }
 
 static void
@@ -1914,7 +1914,7 @@ vusb_send_control_urb(struct vusb_device *vdev, struct vusb_urbp *urbp)
 }
 
 static void
-vusb_send_urb(struct vusb_device *vdev, struct vusb_urbp *urbp, bool is_work)
+vusb_send_urb(struct vusb_device *vdev, struct vusb_urbp *urbp, bool more_work)
 {
 	struct urb *urb = urbp->urb;
 	unsigned int type = usb_pipetype(urb->pipe);
@@ -1947,7 +1947,7 @@ vusb_send_urb(struct vusb_device *vdev, struct vusb_urbp *urbp, bool is_work)
 		/* Remove URB */
 		dprintk(D_URB1, "URB immediate %s\n",
 			vusb_state_to_string(urbp));
-		vusb_urbp_queue_release(vdev, urbp, is_work);
+		vusb_urbp_queue_release(vdev, urbp, more_work);
 	}
 }
 
@@ -2068,7 +2068,7 @@ vusb_port_work_handler(struct work_struct *work)
 /* VUSB Devices                                                             */
 
 static void
-vusb_process(struct vusb_device *vdev, struct vusb_urbp *urbp, bool is_work)
+vusb_process(struct vusb_device *vdev, struct vusb_urbp *urbp, bool more_work)
 {
 	struct vusb_urbp *pos;
 	struct vusb_urbp *next;
@@ -2079,7 +2079,7 @@ vusb_process(struct vusb_device *vdev, struct vusb_urbp *urbp, bool is_work)
 	/* Always drive any response processing since this could make room for
 	 * requests. */
 	list_for_each_entry_safe(pos, next, &vdev->finish_list, urbp_list) {
-		vusb_urb_finish(vdev, pos, is_work);
+		vusb_urb_finish(vdev, pos, more_work);
 	}
 
 	/* New URB, queue it at the back */
@@ -2089,7 +2089,7 @@ vusb_process(struct vusb_device *vdev, struct vusb_urbp *urbp, bool is_work)
 	/* Drive request processing */
 	list_for_each_entry_safe(pos, next, &vdev->pending_list, urbp_list) {
 		/* Work scheduled if 1 or more URBs cannot be sent */
-		vusb_send_urb(vdev, pos, is_work);
+		vusb_send_urb(vdev, pos, more_work);
 	}
 
 	spin_unlock_irqrestore(&vdev->lock, flags);
@@ -2133,7 +2133,7 @@ vusb_device_work_handler(struct work_struct *work)
 		return;
 
 	/* Start request/response processing again */
-	vusb_process(vdev, NULL, true);
+	vusb_process(vdev, NULL, false);
 
 	/* Release any URBs hangin out on the release list */
 	vusb_release(vdev);
