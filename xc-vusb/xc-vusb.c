@@ -159,12 +159,10 @@ struct vusb_urbp {
 
 struct vusb_shadow {
 	usbif_request_t		req;
-	unsigned long		frames[USBIF_MAX_SEGMENTS_PER_REQUEST];
 	struct vusb_urbp	*urbp;
 	usbif_iso_packet_info_t	*iso_packet_info;
 	void			*indirect_reqs;
 	u32			indirect_reqs_size;
-	unsigned long		*indirect_frames;
 	unsigned		in_use:1;
 };
 
@@ -175,6 +173,7 @@ struct vusb_device {
 	enum usb_device_speed		speed;
 	bool				is_ss;
 	bool				rflush;
+	bool				resuming;
 
 	/* The Xenbus device associated with this vusb device */
 	struct xenbus_device		*xendev;
@@ -1072,18 +1071,10 @@ vusb_put_shadow(struct vusb_device *vdev, struct vusb_shadow *shadow)
 
 	shadow->indirect_reqs_size = 0;
 
-	if (shadow->indirect_frames) {
-		kfree(shadow->indirect_frames);
-		shadow->indirect_frames = NULL;
-	}
-
 	for (i = 0; i < shadow->req.nr_segments; i++)
 		gnttab_end_foreign_access(shadow->req.u.gref[i], 0, 0UL);
 
 no_gref:
-
-	memset(&shadow->frames[0], 0,
-		(sizeof(unsigned long)*USBIF_MAX_SEGMENTS_PER_REQUEST));
 	shadow->urbp = NULL;
 	shadow->in_use = 0;
 
@@ -1146,7 +1137,6 @@ vusb_allocate_grefs(struct vusb_device *vdev, struct vusb_shadow *shadow,
 				vdev->xendev->otherend_id, mfn,
 				usb_urb_dir_out(shadow->urbp->urb)); /* OUT is write, so RO */
 
-		shadow->frames[i] = mfn_to_pfn(mfn);
 		shadow->req.nr_segments++;
  	}
 
@@ -1168,11 +1158,9 @@ vusb_allocate_indirect_grefs(struct vusb_device *vdev,
 	u8 *va = (u8*)addr;
 	u32 nr_total = nr_mfns + (iso_addr ? 1 : 0);
 	u32 ref;
-	int iso_frame = (iso_addr ? 1 : 0);
 	int ret, i = 0, j = 0, k = 0;
 
 	BUG_ON(!indirect_reqs);
-	BUG_ON(!shadow->indirect_frames);
 
 	/* This routine cannot be called multiple times for a given shadow
 	 * buffer where vusb_allocate_grefs can. */
@@ -1209,7 +1197,6 @@ vusb_allocate_indirect_grefs(struct vusb_device *vdev,
 				vdev->xendev->otherend_id, iso_mfn,
 				usb_urb_dir_out(shadow->urbp->urb)); /* OUT is write, so RO */
 
-		shadow->indirect_frames[0] = mfn_to_pfn(iso_mfn);
 		indirect_reqs[0].nr_segments++;
 		j++;
 	}
@@ -1226,7 +1213,6 @@ vusb_allocate_indirect_grefs(struct vusb_device *vdev,
 				vdev->xendev->otherend_id, mfn,
 				usb_urb_dir_out(shadow->urbp->urb)); /* OUT is write, so RO */
 
-		shadow->indirect_frames[i + iso_frame] = mfn_to_pfn(mfn);
 		indirect_reqs[j].nr_segments++;
 		if (++k ==  USBIF_MAX_SEGMENTS_PER_IREQUEST) {
 			indirect_reqs[++j].nr_segments = 0;
@@ -1242,8 +1228,6 @@ cleanup:
 	for (i = 0; i < shadow->req.nr_segments; i++)
 		gnttab_end_foreign_access(shadow->req.u.gref[i], 0, 0UL);
 
-	memset(&shadow->frames[0], 0,
-		(sizeof(unsigned long)*USBIF_MAX_SEGMENTS_PER_REQUEST));
 	shadow->req.nr_segments = 0;
 
 	return ret;
@@ -1379,10 +1363,7 @@ vusb_put_urb(struct vusb_device *vdev, struct vusb_urbp *urbp)
 		shadow->indirect_reqs =
 			kmalloc(nr_ind_pages*PAGE_SIZE,
 				GFP_ATOMIC);
-		shadow->indirect_frames =
-			kmalloc(nr_ind_pages*USBIF_MAX_SEGMENTS_PER_IREQUEST,
-				GFP_ATOMIC);
-		if (!shadow->indirect_reqs || !shadow->indirect_frames) {
+		if (!shadow->indirect_reqs) {
 			eprintk("%s out of memory\n", __FUNCTION__);
 			ret = -ENOMEM;
 			goto err;
@@ -1502,10 +1483,7 @@ vusb_put_isochronous_urb(struct vusb_device *vdev, struct vusb_urbp *urbp)
 		shadow->indirect_reqs =
 			kmalloc(nr_ind_pages*PAGE_SIZE,
 				GFP_ATOMIC);
-		shadow->indirect_frames =
-			kmalloc(nr_ind_pages*USBIF_MAX_SEGMENTS_PER_IREQUEST,
-				GFP_ATOMIC);
-		if (!shadow->indirect_reqs || !shadow->indirect_frames) {
+		if (!shadow->indirect_reqs) {
 			eprintk("%s out of memory\n", __FUNCTION__);
 			ret = -ENOMEM;
 			goto err;
@@ -2297,16 +2275,6 @@ vusb_usbif_free(struct vusb_device *vdev)
 		kfree(vdev->shadow_free_list);
 		vdev->shadow_free_list = NULL;
 	}
-
-	/* Unstrap vdev */
-	dev_set_drvdata(&vdev->xendev->dev, NULL);
-}
-
-static int
-vusb_usbif_recover(struct vusb_device *vdev)
-{
-	/* TODO recovery of rings and grants */
-	return 0;
 }
 
 static int
@@ -2615,6 +2583,10 @@ vusb_destroy_device(struct vusb_device *vdev)
 	/* Main cleanup call, everyting is torn down in here */
 	vusb_usbif_free(vdev);
 
+	/* Unstrap vdev on failures and device destruction, not on the
+	 * resume path. */
+	dev_set_drvdata(&vdev->xendev->dev, NULL);
+
 	/* Release all the ready to release and pending URBs - this
 	 * has to be done outside a lock. */
 	list_for_each_entry_safe(pos, next, &vdev->release_list, urbp_list) {
@@ -2688,18 +2660,28 @@ vusb_usbback_changed(struct xenbus_device *dev, enum xenbus_state backend_state)
 #endif
 		break;
 	case XenbusStateConnected:
+		/* When resuming, the device is already created and started.
+		 * Only the backend connection needs to be re-established.
+		 */
+		if (vdev->resuming) {
+			vdev->resuming = false;
+			goto resume;
+		}
+
 		if (vusb_start_device(vdev)) {
 			printk(KERN_ERR "failed to start frontend, aborting!\n");
 			xenbus_switch_state(dev, XenbusStateClosed);
 			vusb_destroy_device(vdev);
 			break;
 		}
+
+resume:
 		/* Front end is now connected */
 		xenbus_switch_state(dev, XenbusStateConnected);
 		break;
 	case XenbusStateClosing:
-		xenbus_frontend_closed(dev);
 	case XenbusStateClosed:
+		xenbus_frontend_closed(dev);
 		break;
 	}
 }
@@ -2723,32 +2705,35 @@ vusb_xenusb_remove(struct xenbus_device *dev)
 static int
 vusb_usbfront_suspend(struct xenbus_device *dev)
 {
-	struct vusb_device *vdev = dev_get_drvdata(&dev->dev);
-
 	iprintk("xen_usbif: pm freeze event received, detaching usbfront\n");
 
-	/* When suspending, just halt processing, flush the ring and teardown
-	 * the usbif. Leave the URB lists, vdev and vport as is.
+	/* When suspending, just set the front end to closing and let things
+	 * disconnect from the back. On resume the ring and ec will be rebuilt.
 	 */
-	vusb_usbif_halt(vdev);
-	vusb_usbif_free(vdev);
+	xenbus_switch_state(dev, XenbusStateClosing);
 
 	return 0;
 }
 
+/* Tear down the xenbus lower interface and rebuild it on resume. The upper
+ * vusb device layer state is intact as the kernel expects it to be. Note that
+ * during the suspend operation, all drivers are supposed to cleanup their URBs
+ * using usb_kill_urb() which will cleanup all the queues and URBs in calls
+ * to the dequeue handler.  This means all the shared ring and shadow buffers
+ * can be nuked on resume and rebuilt.
+ */
 static int
 vusb_usbfront_resume(struct xenbus_device *dev)
 {
 	struct vusb_device *vdev = dev_get_drvdata(&dev->dev);
-	int err = 0;
 
 	iprintk("xen_usbif: pm restore event received, unregister usb device\n");
 
-	err = vusb_talk_to_usbback(vdev);
-	if (!err)
-		err = vusb_usbif_recover(vdev);
+	vusb_usbif_free(vdev);
 
-	return err;
+	vdev->resuming = true;
+
+	return vusb_talk_to_usbback(vdev);
 }
 
 static struct xenbus_device_id vusb_usbfront_ids[] = {
