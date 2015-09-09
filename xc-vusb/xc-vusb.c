@@ -2230,8 +2230,14 @@ vusb_usbif_halt(struct vusb_device *vdev)
 	gnttab_cancel_free_callback(&vdev->callback);
 
 	/* Shutdown all work. Must be done with no locks held. */
+#if ( LINUX_VERSION_CODE <= KERNEL_VERSION(3,15,0) )
+	/* Deprecated but still there in 3.15, just calls flush_work */
 	flush_work_sync(&vport->work);
 	flush_work_sync(&vdev->work);
+#else
+	flush_work(&vport->work);
+	flush_work(&vdev->work);
+#endif
 
 	/* Eat up anything left on the ring */
 	while (wait_event_interruptible(vdev->wait_queue,
