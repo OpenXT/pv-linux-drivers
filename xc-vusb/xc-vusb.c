@@ -91,25 +91,25 @@
 /* #define VUSB_DEBUG */
 
 #ifdef VUSB_DEBUG
-#  define dprintk(mask, args...)					\
-	do {								\
-		if (DEBUGMASK & mask)					\
-			printk(KERN_DEBUG "vusb: "args);		\
+#  define dprintk(mask, format, args...)					\
+	do {									\
+		if (DEBUGMASK & mask)						\
+			printk(KERN_DEBUG "vusb: " format, ##args);		\
 	} while (0)
 
-#  define dprint_hex_dump(mask, args...)				\
-	do {								\
-		if (DEBUGMASK & mask)					\
-			print_hex_dump(KERN_DEBUG, "vusb: "args);	\
+#  define dprint_hex_dump(mask, format, args...)				\
+	do {									\
+		if (DEBUGMASK & mask)						\
+			print_hex_dump(KERN_DEBUG, "vusb: " format, ##args);	\
 	} while (0)
 #else
 #  define dprintk(args...) do {} while (0)
 #  define dprint_hex_dump(args...) do {} while (0)
 #endif
 
-#define eprintk(args...) printk(KERN_ERR "vusb: "args)
-#define wprintk(args...) printk(KERN_WARNING "vusb: "args)
-#define iprintk(args...) printk(KERN_INFO "vusb: "args)
+#define eprintk(format, args...) printk(KERN_ERR "vusb: " format, ##args)
+#define wprintk(format, args...) printk(KERN_WARNING "vusb: " format, ##args)
+#define iprintk(format, args...) printk(KERN_INFO "vusb: " format, ##args)
 
 /* How many ports on the root hub */
 #define VUSB_PORTS	USB_MAXCHILDREN
@@ -1787,7 +1787,7 @@ vusb_urb_isochronous_finish(struct vusb_device *vdev, struct vusb_urbp *urbp,
 		urb->start_frame = urbp->rsp.data;
 
 	urb->actual_length = total_length;
-	dprintk(D_URB2, "ISO response urbp: %s total: %u errors: %d\n",
+	dprintk(D_URB2, "ISO response urbp: %p total: %u errors: %d\n",
 		urbp, total_length, urb->error_count);
 
 	return;
@@ -2570,7 +2570,7 @@ vusb_destroy_device(struct vusb_device *vdev)
 	if (update_rh)
 		usb_hcd_poll_rh_status(vhcd_to_hcd(vhcd));
 
-	dprintk(D_PORT1, "Remove device from port %u\n", vdev->port);
+	dprintk(D_PORT1, "Remove device from port %u\n", vport->port);
 
 	/* Main halt call, shut everything down */
 	vusb_usbif_halt(vdev);
