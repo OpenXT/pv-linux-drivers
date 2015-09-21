@@ -29,9 +29,7 @@
 /* TODO
  * Use DMA buffers
  * Handle errors on internal cmds
- * Sleep/resume and recover functionality
  * Refactor vusb_put_urb and vusb_put_isochronous_urb into one function.
- * Add branch prediction
  */
 
 #include <linux/mm.h>
@@ -372,7 +370,7 @@ vusb_get_vport(struct vusb_vhcd *vhcd, u16 id)
 			continue;
 		if (!vhcd->vrh_ports[i].present)
 			break;
-		if (vhcd->vrh_ports[i].device_id == id) {
+		if (unlikely(vhcd->vrh_ports[i].device_id == id)) {
 			wprintk("Device id 0x%04x already exists on port %d\n",
 				id, vhcd->vrh_ports[i].port);
 			return NULL;
@@ -394,8 +392,10 @@ vusb_get_vport(struct vusb_vhcd *vhcd, u16 id)
 static void
 vusb_put_vport(struct vusb_vhcd *vhcd, struct vusb_rh_port *vport)
 {
-	/* Port reset after this call. Restore the port values
-	 * when no device is attached */
+	/*
+	 * Port reset after this call. Restore the port values
+	 * when no device is attached.
+	 */
 	memset(&vport->vdev, 0, sizeof(struct vusb_device));
 	vport->device_id = 0;
 	vport->connecting = 0;
@@ -415,6 +415,10 @@ vusb_set_link_state(struct vusb_rh_port *vport)
 	dprintk(D_STATE, "SLS: Port index %u status 0x%08x\n",
 			vport->port, newstatus);
 
+	/*
+	 * Ultimately this is what indictes whether there is
+	 * a device on a given port of the root hub.
+	 */
 	if (vport->present && !vport->closing) {
 		newstatus |= (USB_PORT_STAT_CONNECTION) |
 					vusb_speed_to_port_stat(vport->vdev.speed);
@@ -444,7 +448,6 @@ vusb_set_link_state(struct vusb_rh_port *vport)
 	vport->port_status = newstatus;
 }
 
-/* SetFeaturePort(PORT_RESET) */
 static void
 vusb_port_reset(struct vusb_vhcd *vhcd, struct vusb_rh_port *vport)
 {
@@ -453,8 +456,10 @@ vusb_port_reset(struct vusb_vhcd *vhcd, struct vusb_rh_port *vport)
 
 	vport->port_status |= USB_PORT_STAT_ENABLE | USB_PORT_STAT_POWER;
 
-	/* Test reset gate, only want one reset in flight at a time per
-	 * port. If the gate is set, it will return the "unless" value. */
+	/*
+	 * Test reset gate, only want one reset in flight at a time per
+	 * port. If the gate is set, it will return the "unless" value.
+	 */
 	if (__atomic_add_unless(&vport->reset_pending, 1, 1) == 1)
 		return;
 
@@ -470,7 +475,6 @@ vusb_set_port_feature(struct vusb_vhcd *vhcd, struct vusb_rh_port *vport, u16 va
 	case USB_PORT_FEAT_SUSPEND:
 		/* Ignored now */
 		break;
-
 	case USB_PORT_FEAT_POWER:
 		vport->port_status |= USB_PORT_STAT_POWER;
 		break;
@@ -530,21 +534,21 @@ vusb_hub_descriptor(struct usb_hub_descriptor *desc)
 	u16 temp;
 
 	desc->bDescriptorType = 0x29;
-	desc->bPwrOn2PwrGood = 10; /* echi 1.0, 2.3.9 says 20ms max */
+	desc->bPwrOn2PwrGood = 10; /* EHCI 1.0, 2.3.9 says 20ms max */
 	desc->bHubContrCurrent = 0;
 	desc->bNbrPorts = VUSB_PORTS;
 
-	/* size of DeviceRemovable and PortPwrCtrlMask fields */
+	/* Size of DeviceRemovable and PortPwrCtrlMask fields */
 	temp = 1 + (VUSB_PORTS / 8);
 	desc->bDescLength = 7 + 2 * temp;
 
-	/* bitmaps for DeviceRemovable and PortPwrCtrlMask */
+	/* Bitmaps for DeviceRemovable and PortPwrCtrlMask */
 
 	/* The union was introduced to support USB 3.0 */
 	memset(&desc->u.hs.DeviceRemovable[0], 0, temp);
 	memset(&desc->u.hs.DeviceRemovable[temp], 0xff, temp);
 
-	/* per-port over current reporting and no power switching */
+	/* Per-port over current reporting and no power switching */
 	temp = 0x00a;
 	desc->wHubCharacteristics = cpu_to_le16(temp);
 }
@@ -593,8 +597,6 @@ vusb_hcd_stop(struct usb_hcd *hcd)
 	vhcd = hcd_to_vhcd(hcd);
 
 	hcd->state = HC_STATE_HALT;
-	/* TODO: remove all URBs */
-	/* TODO: "cleanly make HCD stop writing memory and doing I/O" */
 
 	dev_info(vusb_dev(vhcd), "stopped\n");
 	dprintk(D_MISC, "<vusb_stop\n");
@@ -614,14 +616,14 @@ vusb_hcd_urb_enqueue(struct usb_hcd *hcd, struct urb *urb, gfp_t mem_flags)
 
 	vhcd = hcd_to_vhcd(hcd);
 
-	if (!urb->transfer_buffer && urb->transfer_buffer_length)
+	if (unlikely(!urb->transfer_buffer && urb->transfer_buffer_length))
 		return -EINVAL;
 
-	if (!vusb_check_port(urb->dev->portnum))
+	if (unlikely(!vusb_check_port(urb->dev->portnum)))
 		return -EPIPE;
 
 	urbp = kzalloc(sizeof(*urbp), mem_flags);
-	if (!urbp)
+	if (unlikely(!urbp))
 		return -ENOMEM;
 
 	urbp->state = VUSB_URBP_NEW;
@@ -634,7 +636,7 @@ vusb_hcd_urb_enqueue(struct usb_hcd *hcd, struct urb *urb, gfp_t mem_flags)
 	spin_lock_irqsave(&vhcd->lock, flags);
 
 	vport = vusb_vport_by_port(vhcd, urbp->port);
-	if (vhcd->hcd_state == VUSB_HCD_INACTIVE || !vport->present) {
+	if (unlikely(vhcd->hcd_state == VUSB_HCD_INACTIVE || !vport->present)) {
 		kfree(urbp);
 		spin_unlock_irqrestore(&vhcd->lock, flags);
 		eprintk("Enqueue processing called with device/port invalid states\n");
@@ -648,7 +650,7 @@ vusb_hcd_urb_enqueue(struct usb_hcd *hcd, struct urb *urb, gfp_t mem_flags)
 	}
 
 	ret = usb_hcd_link_urb_to_ep(hcd, urb);
-	if (ret) {
+	if (unlikely(ret)) {
 		kfree(urbp);
 		spin_unlock_irqrestore(&vhcd->lock, flags);
 		return ret;
@@ -680,7 +682,7 @@ vusb_hcd_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 
 	dprintk(D_MISC, "*vusb_urb_dequeue\n");
 
-	if (!vusb_check_port(urb->dev->portnum))
+	if (unlikely(!vusb_check_port(urb->dev->portnum)))
 		return -EPIPE;
 
 	vhcd = hcd_to_vhcd(hcd);
@@ -689,18 +691,20 @@ vusb_hcd_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 
 	/* Supposed to hold HCD lock when calling this */
 	ret = usb_hcd_check_unlink_urb(hcd, urb, status);
-	if (ret) {
+	if (unlikely(ret)) {
 		spin_unlock_irqrestore(&vhcd->lock, flags);
 		return ret;
 	}
 
 	urb->status = status;
 
-	/* If it can't be processed, the urbp and urb will be released
+	/*
+	 * If it can't be processed, the urbp and urb will be released
 	 * in the device teardown code which is where this device is going
-	 * (or gone). */
+	 * (or gone).
+	 */
 	vport = vusb_vport_by_port(vhcd, urb->dev->portnum);
-	if (vhcd->hcd_state == VUSB_HCD_INACTIVE || !vport->present) {
+	if (unlikely(vhcd->hcd_state == VUSB_HCD_INACTIVE || !vport->present)) {
 		spin_unlock_irqrestore(&vhcd->lock, flags);
 		eprintk("Dequeue processing called with device/port invalid states\n");
 		return -ENXIO;
@@ -718,7 +722,8 @@ vusb_hcd_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 
 	spin_lock_irqsave(&vdev->lock, flags);
 
-	/* Need to find the urbp. Note the urbp can be in 4 states:
+	/*
+	 * Need to find the urbp. Note the urbp can be in 4 states:
 	 * 1. In the pending queue not sent. In this case we just grab it and
 	 *    release it.
 	 * 2. In the pending queue sent. In this case we need to flag it as
@@ -731,7 +736,8 @@ vusb_hcd_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 	 * urbp through to completion. Note there is a window in enqueue where
 	 * the new urbp is not yet on the pending list outside the vdev lock.
 	 * It seems this would be OK - it seems it is unlikely the core would
-	 * call dequeue on the same URB it was currently calling enqueue for. */
+	 * call dequeue on the same URB it was currently calling enqueue for.
+	 */
 	list_for_each_entry(urbp, &vdev->pending_list, urbp_list) {
 		if (urbp->urb == urb) {
 			found = true;
@@ -740,22 +746,26 @@ vusb_hcd_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 	}
 
 	while (found) {
-		/* Found it in the pending list, see if it is in state 1 and
-		 * and get rid of it right here and can skip processing. */
+		/*
+		 * Found it in the pending list, see if it is in state 1 and
+		 * and get rid of it right here and can skip processing.
+		 */
 		if (urbp->state != VUSB_URBP_SENT) {
 			vusb_urbp_queue_release(vdev, urbp, true);
 			skip = true;
 			break;
 		}
 
-		/* State 2, this is the hardest one. The urbp cannot be simply
+		/*
+		 * State 2, this is the hardest one. The urbp cannot be simply
 		 * discarded because it has shadow associated with it. It will
 		 * have to be flagged as canceled and left for response
 		 * processing to handle later. It also has to be shot down in
-		 * the backend processing. */
+		 * the backend processing.
+		 */
 		urbp->state = VUSB_URBP_CANCEL;
 		ret = vusb_put_internal_request(vdev, VUSB_CMD_CANCEL, urbp->id);
-		if (ret) {
+		if (unlikely(ret)) {
 			eprintk("Failed cancel command for URB id: %d, err: %d\n",
 				(int)urbp->id, ret);
 			/* Go on and do the best we can... */
@@ -763,8 +773,10 @@ vusb_hcd_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 		break;
 	}
 
-	/* For urbp's in states 3 and 4, they will be fishished and released
-	 * and their status is what it is at this point. */
+	/*
+	 * For urbp's in states 3 and 4, they will be fishished and released
+	 * and their status is what it is at this point.
+	 */
 
 	spin_unlock_irqrestore(&vdev->lock, flags);
 
@@ -859,17 +871,16 @@ vusb_hcd_hub_status(struct usb_hcd *hcd, char *buf)
 }
 
 static int
-vusb_hcd_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
-		u16 wIndex, char *buf, u16 wLength)
+vusb_hcd_hub_control(struct usb_hcd *hcd, u16 type_req, u16 value,
+		u16 index, char *buf, u16 length)
 {
 	struct vusb_vhcd *vhcd;
 	int retval = 0;
 	unsigned long flags;
 	u32 status;
 
-	/* TODO fix param names */
 	dprintk(D_CTRL, ">vusb_hub_control %04x %04x %04x\n",
-			typeReq, wIndex, wValue);
+			type_req, index, value);
 
 	if (!HCD_HW_ACCESSIBLE(hcd)) {
 		dprintk(D_CTRL, "<vusb_hub_control %d\n", ETIMEDOUT);
@@ -879,18 +890,18 @@ vusb_hcd_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 	vhcd = hcd_to_vhcd(hcd);
 	spin_lock_irqsave(&vhcd->lock, flags);
 
-	switch (typeReq) {
+	switch (type_req) {
 	case ClearHubFeature:
 		break;
 	case ClearPortFeature:
 		dprintk(D_CTRL, "ClearPortFeature port %d val: 0x%04x\n",
-				wIndex, wValue);
-		if (!vusb_check_port(wIndex)) {
-			wprintk("ClearPortFeature invalid port %u", wIndex);
+				index, value);
+		if (unlikely(!vusb_check_port(index))) {
+			wprintk("ClearPortFeature invalid port %u", index);
         	        retval = -EPIPE;
 	                break;
 		}
-		vusb_clear_port_feature(vusb_vport_by_port(vhcd, wIndex), wValue);
+		vusb_clear_port_feature(vusb_vport_by_port(vhcd, index), value);
 		break;
 	case GetHubDescriptor:
 		vusb_hub_descriptor((struct usb_hub_descriptor *)buf);
@@ -900,13 +911,13 @@ vusb_hcd_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 		*(__le32 *)buf = cpu_to_le32(0);
 		break;
 	case GetPortStatus:
-		if (!vusb_check_port(wIndex)) {
-			wprintk("GetPortStatus invalid port %u", wIndex);
+		if (unlikely(!vusb_check_port(index))) {
+			wprintk("GetPortStatus invalid port %u", index);
         	        retval = -EPIPE;
 	                break;
 		}
-		status = vusb_vport_by_port(vhcd, wIndex)->port_status;
-		dprintk(D_CTRL, "GetPortStatus port %d = 0x%08x\n", wIndex, status);
+		status = vusb_vport_by_port(vhcd, index)->port_status;
+		dprintk(D_CTRL, "GetPortStatus port %d = 0x%08x\n", index, status);
 		((__le16 *) buf)[0] = cpu_to_le16(status);
 		((__le16 *) buf)[1] = cpu_to_le16(status >> 16);
 		break;
@@ -914,31 +925,32 @@ vusb_hcd_hub_control(struct usb_hcd *hcd, u16 typeReq, u16 wValue,
 		retval = -EPIPE;
 		break;
 	case SetPortFeature:
-		if (!vusb_check_port(wIndex)) {
-			wprintk("SetPortFeature invalid port %u", wIndex);
+		if (unlikely(!vusb_check_port(index))) {
+			wprintk("SetPortFeature invalid port %u", index);
         	        retval = -EPIPE;
 	                break;
 		}
-		dprintk(D_CTRL, "SetPortFeature port %d val: 0x%04x\n", wIndex, wValue);
-		vusb_set_port_feature(vhcd, vusb_vport_by_port(vhcd, wIndex), wValue);
+		dprintk(D_CTRL, "SetPortFeature port %d val: 0x%04x\n", index, value);
+		vusb_set_port_feature(vhcd, vusb_vport_by_port(vhcd, index), value);
 		break;
 
 	default:
 		dev_dbg(vusb_dev(vhcd),
-			"hub control req%04x v%04x i%04x l%d\n",
-			typeReq, wValue, wIndex, wLength);
+			"UNKNOWN hub control req%04x v%04x i%04x l%d\n",
+			type_req, value, index, length);
 
 		/* "protocol stall" on error */
 		retval = -EPIPE;
 	}
 	spin_unlock_irqrestore(&vhcd->lock, flags);
 
-	if (wIndex >= 1 && wIndex <= VUSB_PORTS) {
-		if ((vusb_vport_by_port(vhcd, wIndex)->port_status & PORT_C_MASK) != 0)
+	if (likely(index >= 1 && index <= VUSB_PORTS)) {
+		if ((vusb_vport_by_port(vhcd, index)->port_status & PORT_C_MASK) != 0)
 			 usb_hcd_poll_rh_status(hcd);
 	}
 
 	dprintk(D_MISC, "<vusb_hub_control %d\n", retval);
+
 	return retval;
 }
 
@@ -1010,14 +1022,14 @@ static const struct hc_driver vusb_hcd_driver = {
 static struct vusb_shadow*
 vusb_get_shadow(struct vusb_device *vdev)
 {
-	if (!vdev->shadow_free) {
+	if (unlikely(!vdev->shadow_free)) {
 		printk(KERN_ERR "Requesting shadow when shadow_free == 0!\n");
 		return NULL;
 	}
 
 	vdev->shadow_free--;
 
-	if (vdev->shadows[vdev->shadow_free_list[vdev->shadow_free]].in_use) {
+	if (unlikely(vdev->shadows[vdev->shadow_free_list[vdev->shadow_free]].in_use)) {
 		printk(KERN_ERR "Requesting shadow at %d which is in use!\n",
 			vdev->shadow_free);
 		return NULL;
@@ -1038,14 +1050,16 @@ vusb_put_shadow(struct vusb_device *vdev, struct vusb_shadow *shadow)
 	usbif_indirect_request_t *ireq;
 	int i, j;
 
-	if (!shadow->in_use) {
+	if (unlikely(!shadow->in_use)) {
 		printk(KERN_ERR "Returning shadow %p that is not in use to list!\n",
 			shadow);
 		return;
 	}
 
-	/* If the iso_packet_info has not been detached for the urbp, take
-	 * care of it here. */
+	/*
+	 * If the iso_packet_info has not been detached for the urbp,
+	 * care of it here.
+	 */
 	if (shadow->iso_packet_info) {
 		kfree(shadow->iso_packet_info);
 		shadow->iso_packet_info = NULL;
@@ -1055,8 +1069,10 @@ vusb_put_shadow(struct vusb_device *vdev, struct vusb_shadow *shadow)
 	if (shadow->req.flags & USBIF_F_DIRECT_DATA)
 		goto no_gref;
 
-	/* N.B. it turns out he readonly param to gnttab_end_foreign_access is,
-	 * unused, that is why we don't have to track it and use it here. */
+	/*
+	 * N.B. it turns out he readonly param to gnttab_end_foreign_access is,
+	 * unused, that is why we don't have to track it and use it here.
+	 */
 	if (shadow->indirect_reqs) {
 		ireq = (usbif_indirect_request_t*)shadow->indirect_reqs;
 
@@ -1110,10 +1126,12 @@ vusb_allocate_grefs(struct vusb_device *vdev, struct vusb_shadow *shadow,
 
 	dprintk(D_RING2, "Allocate gref for %d mfns\n", (int)nr_mfns);
 
-	/* NOTE: we are following the blkback model where we are not
+	/*
+	 * NOTE: we are following the blkback model where we are not
 	 * freeing the pages on gnttab_end_foreign_access so we don't
 	 * have to track them. That memory belongs to the USB core
-	 * in most cases or is the internal request page. */
+	 * in most cases or is the internal request page.
+	 */
 
 	ret = gnttab_alloc_grant_references(nr_mfns, &gref_head);
 	if (ret < 0) {
@@ -1133,9 +1151,10 @@ vusb_allocate_grefs(struct vusb_device *vdev, struct vusb_shadow *shadow,
 
 		shadow->req.u.gref[shadow->req.nr_segments] = ref;
 
+		/* Direction OUT is write making the 4th arg RO */
 		gnttab_grant_foreign_access_ref(ref,
 				vdev->xendev->otherend_id, mfn,
-				usb_urb_dir_out(shadow->urbp->urb)); /* OUT is write, so RO */
+				usb_urb_dir_out(shadow->urbp->urb));
 
 		shadow->req.nr_segments++;
  	}
@@ -1162,8 +1181,10 @@ vusb_allocate_indirect_grefs(struct vusb_device *vdev,
 
 	BUG_ON(!indirect_reqs);
 
-	/* This routine cannot be called multiple times for a given shadow
-	 * buffer where vusb_allocate_grefs can. */
+	/*
+	 * This routine cannot be called multiple times for a given shadow
+	 * buffer where vusb_allocate_grefs can.
+	 */
 	shadow->req.nr_segments = 0;
 
 	/* Set up the descriptors for the indirect pages in the request. */
@@ -1182,9 +1203,11 @@ vusb_allocate_indirect_grefs(struct vusb_device *vdev,
 		goto cleanup;
 	}
 
-	/* Set up the descriptor for the iso packets - it is the first page of
+	/*
+	 * Set up the descriptor for the iso packets - it is the first page of
 	 * the first indirect page. The first gref of the first page points
-	 * to the iso packet descriptor page. */
+	 * to the iso packet descriptor page.
+	 */
 	if (iso_addr) {
 		iso_mfn = PFN_DOWN(arbitrary_virt_to_machine(iso_addr).maddr);
 
@@ -1209,9 +1232,10 @@ vusb_allocate_indirect_grefs(struct vusb_device *vdev,
 
 		indirect_reqs[j].gref[k] = ref;
 
+		/* Direction OUT is write making the 4th arg RO */
 		gnttab_grant_foreign_access_ref(ref,
 				vdev->xendev->otherend_id, mfn,
-				usb_urb_dir_out(shadow->urbp->urb)); /* OUT is write, so RO */
+				usb_urb_dir_out(shadow->urbp->urb));
 
 		indirect_reqs[j].nr_segments++;
 		if (++k ==  USBIF_MAX_SEGMENTS_PER_IREQUEST) {
@@ -1240,7 +1264,8 @@ vusb_flush_ring(struct vusb_device *vdev)
 
 	RING_PUSH_REQUESTS_AND_CHECK_NOTIFY(&vdev->ring, notify);
 
-	/* TODO see OXT-311. The backend is not properly checking for more work
+	/*
+	 * TODO see OXT-311. The backend is not properly checking for more work
 	 * to do so it currently unconditionally notifying. This means the
 	 * front end must do this for now. This explains a bunch of hangs and
 	 * timeouts.
@@ -1272,7 +1297,7 @@ vusb_put_internal_request(struct vusb_device *vdev,
 	/* NOTE USBIF_T_ABORT_PIPE is not currently supported */
 
 	/* Internal request can use the last entry */
-	if (vdev->shadow_free == 0)
+	if (unlikely(vdev->shadow_free == 0))
 		return -ENOMEM;
 
 	shadow = vusb_get_shadow(vdev);
@@ -1287,8 +1312,10 @@ vusb_put_internal_request(struct vusb_device *vdev,
 	shadow->req.flags = 0;
 
 	if (cmd == VUSB_CMD_RESET || cmd == VUSB_CMD_CYCLE) {
-		/* Resets/cycles are easy - no response data. Always use the
-		 * reset type even though the backed relies on the flags. */
+		/*
+		 * Resets/cycles are easy - no response data. Always use the
+		 * reset type even though the backed relies on the flags.
+		 */
 		shadow->req.type = USBIF_T_RESET;
 		shadow->req.flags = ((cmd == VUSB_CMD_CYCLE) ?
 			USBIF_F_CYCLE_PORT : USBIF_F_RESET);
@@ -1336,22 +1363,24 @@ vusb_put_urb(struct vusb_device *vdev, struct vusb_urbp *urbp)
 	shadow->urbp = urbp;
 	urbp->id = shadow->req.id;
 
-	/* Is there any data to transfer, e.g. a control transaction may
-	 * just be the setup packet. */
+	/*
+	 * Is there any data to transfer, e.g. a control transaction may
+	 * just be the setup packet.
+	 */
 	if (urb->transfer_buffer_length > 0)
 		nr_mfns = SPAN_PAGES(urb->transfer_buffer,
 				urb->transfer_buffer_length);
 
 	if (nr_mfns > USBIF_MAX_SEGMENTS_PER_REQUEST) {
 		/* Need indirect support here, only used with bulk transfers */
-		if (!usb_pipebulk(urb->pipe)) {
+		if (unlikely(!usb_pipebulk(urb->pipe))) {
 			eprintk("%p(%s) too many pages for non-bulk transfer: %d\n",
 				vdev, vdev->xendev->nodename, nr_mfns);
 			ret = -E2BIG;
 			goto err;
 		}
 
-		if (nr_mfns > MAX_PAGES_FOR_INDIRECT_REQUEST) {
+		if (likely(nr_mfns > MAX_PAGES_FOR_INDIRECT_REQUEST)) {
 			eprintk("%p(%s) too many pages for any transfer: %d\n",
 				vdev, vdev->xendev->nodename, nr_mfns);
 			ret = -E2BIG;
@@ -1363,7 +1392,7 @@ vusb_put_urb(struct vusb_device *vdev, struct vusb_urbp *urbp)
 		shadow->indirect_reqs =
 			kmalloc(nr_ind_pages*PAGE_SIZE,
 				GFP_ATOMIC);
-		if (!shadow->indirect_reqs) {
+		if (unlikely(!shadow->indirect_reqs)) {
 			eprintk("%s out of memory\n", __FUNCTION__);
 			ret = -ENOMEM;
 			goto err;
@@ -1373,10 +1402,12 @@ vusb_put_urb(struct vusb_device *vdev, struct vusb_urbp *urbp)
 						urb->transfer_buffer,
 						urb->transfer_buffer_length,
 						NULL);
-		if (ret) {
+		if (unlikely(ret)) {
 			eprintk("%s failed to alloc indirect grefs\n", __FUNCTION__);
-			/* Have to free this here to prevent vusb_put_shadow
-			 * from trying to return grefs */
+			/*
+			 * Have to free this here to prevent vusb_put_shadow
+			 * from trying to return grefs.
+			 */
 			kfree(shadow->indirect_reqs);
 			shadow->indirect_reqs = NULL;
 			goto err;
@@ -1449,7 +1480,7 @@ vusb_put_isochronous_urb(struct vusb_device *vdev, struct vusb_urbp *urbp)
 	urbp->id = shadow->req.id;
 
 	iso_packets = (usbif_iso_packet_info_t*)kzalloc(PAGE_SIZE, GFP_ATOMIC);
-	if (!iso_packets) {
+	if (unlikely(!iso_packets)) {
 		ret = -ENOMEM;
 		goto err;
 	}
@@ -1463,14 +1494,14 @@ vusb_put_isochronous_urb(struct vusb_device *vdev, struct vusb_urbp *urbp)
 	shadow->iso_packet_info = iso_packets;
 
 	nr_mfns = SPAN_PAGES(urb->transfer_buffer, urb->transfer_buffer_length);
-	if (nr_mfns == 0) {
+	if (unlikely(nr_mfns == 0)) {
 		eprintk("ISO URB urbp: %p with no data buffers\n", urbp);
 		ret = -EINVAL;
 		goto err;
 	}
 
 	if (nr_mfns > USBIF_MAX_ISO_SEGMENTS) {
-		if (nr_mfns > MAX_PAGES_FOR_INDIRECT_ISO_REQUEST) {
+		if (unlikely(nr_mfns > MAX_PAGES_FOR_INDIRECT_ISO_REQUEST)) {
 			eprintk("%p(%s) too many pages for ISO transfer: %d\n",
 				vdev, vdev->xendev->nodename, nr_mfns);
 			ret = -E2BIG;
@@ -1483,7 +1514,7 @@ vusb_put_isochronous_urb(struct vusb_device *vdev, struct vusb_urbp *urbp)
 		shadow->indirect_reqs =
 			kmalloc(nr_ind_pages*PAGE_SIZE,
 				GFP_ATOMIC);
-		if (!shadow->indirect_reqs) {
+		if (unlikely(!shadow->indirect_reqs)) {
 			eprintk("%s out of memory\n", __FUNCTION__);
 			ret = -ENOMEM;
 			goto err;
@@ -1493,10 +1524,12 @@ vusb_put_isochronous_urb(struct vusb_device *vdev, struct vusb_urbp *urbp)
 						urb->transfer_buffer,
 						urb->transfer_buffer_length,
 						iso_packets);
-		if (ret) {
+		if (unlikely(ret)) {
 			eprintk("%s failed to alloc ISO indirect grefs\n", __FUNCTION__);
-			/* Have to free this here to prevent vusb_put_shadow
-			 * from trying to return grefs */
+			/*
+			 * Have to free this here to prevent vusb_put_shadow
+			 * from trying to return grefs.
+			 */
 			kfree(shadow->indirect_reqs);
 			shadow->indirect_reqs = NULL;
 			goto err;
@@ -1588,9 +1621,11 @@ vusb_urbp_release(struct vusb_vhcd *vhcd, struct vusb_urbp *urbp)
 		kfree(urbp->iso_packet_info);
 	kfree(urbp);
 
-	/* Now to be more specific, the first function must be called holding
+	/*
+	 * Now to be more specific, the first function must be called holding
 	 * the HCDs private lock, the second must not because it calls the
-	 * completion routine of the driver that owns the URB. */
+	 * completion routine of the driver that owns the URB.
+	 */
 	spin_lock_irqsave(&vhcd->lock, flags);
 	usb_hcd_unlink_urb_from_ep(vhcd_to_hcd(vhcd), urb);
 	spin_unlock_irqrestore(&vhcd->lock, flags);
@@ -1601,15 +1636,19 @@ static void
 vusb_urbp_queue_release(struct vusb_device *vdev, struct vusb_urbp *urbp,
 		bool more_work)
 {
-	/* Remove from the active urbp list and place it on the release list.
-	 * Called from the urb processing routines holding the vdev lock. */
+	/*
+	 * Remove from the active urbp list and place it on the release list.
+	 * Called from the urb processing routines holding the vdev lock.
+	 */
 	list_del(&urbp->urbp_list);
 
 	list_add_tail(&urbp->urbp_list, &vdev->release_list);
 
-	/* If this is being called from work item processing, there is no
+	/*
+	 * If this is being called from work item processing, there is no
 	 * need to schedule more work since the work item processing will
-	 * also process the release_list as a last step. */
+	 * also process the release_list as a last step.
+	 */
 	if (more_work)
 		schedule_work(&vdev->work);
 }
@@ -1666,9 +1705,11 @@ vusb_urb_common_finish(struct vusb_device *vdev, struct vusb_urbp *urbp,
 {
 	struct urb *urb = urbp->urb;
 
-	/* If the URB was canceled and shot down in the backend then
+	/*
+	 * If the URB was canceled and shot down in the backend then
 	 * just use the error code set in dequeue and don't bother
-	 * setting values. */
+	 * setting values.
+	 */
 	if (urbp->state == VUSB_URBP_CANCEL)
 		return;
 
@@ -1682,8 +1723,10 @@ vusb_urb_common_finish(struct vusb_device *vdev, struct vusb_urbp *urbp,
 	dprintk(D_URB2, "%s URB completed status %d len %u\n",
 		vusb_dir_to_string(in), urb->status, urbp->rsp.actual_length);
 
-	/* Sanity check on len, should be less or equal to
-	 * the length of the transfer buffer */
+	/*
+	 * Sanity check on len, should be less or equal to the length of the
+	 * transfer buffer.
+	 */
 	if (unlikely(in && urbp->rsp.actual_length >
 		urb->transfer_buffer_length)) {
 		wprintk("IN URB too large (expect %u got %u)\n",
@@ -1706,10 +1749,11 @@ vusb_urb_control_finish(struct vusb_device *vdev, struct vusb_urbp *urbp)
 	u8 *buf = (u8*)urb->transfer_buffer;
 	bool in;
 
-	/* This is fun. If a USB 3 device is in a USB 3 port, we get a USB 3
+	/*
+	 * This is fun. If a USB 3 device is in a USB 3 port, we get a USB 3
 	 * device descriptor. Since we are a USB 2 HCD, things get unhappy
 	 * above us. So this code will make the descriptor look more
-	 * USB 2ish by fixing the bcdUSB  and bMaxPacketSize0
+	 * USB 2ish by fixing the bcdUSB and bMaxPacketSize0
 	 */
 	if (vdev->is_ss && ctrl->bRequest == USB_REQ_GET_DESCRIPTOR &&
 		(ctrl->wValue & 0xff00) == 0x0100 &&
@@ -1756,7 +1800,7 @@ vusb_urb_isochronous_finish(struct vusb_device *vdev, struct vusb_urbp *urbp,
 		packet_length = urbp->iso_packet_info[i].length;
 
 		/* Sanity check on packet length */
-		if (packet_length > iso_desc[i].length) {
+		if (unlikely(packet_length > iso_desc[i].length)) {
 			wprintk("ISO packet %d too much data\n", i);
 			goto iso_io;
 		}
@@ -1767,8 +1811,8 @@ vusb_urb_isochronous_finish(struct vusb_device *vdev, struct vusb_urbp *urbp,
 		iso_desc[i].offset = urbp->iso_packet_info[i].offset;
 
 		/* Do sanity check each time on effective data length */
-		if ((in) && (urb->transfer_buffer_length <
-				(total_length + packet_length))) {
+		if (unlikely((in) && (urb->transfer_buffer_length <
+				(total_length + packet_length)))) {
 			wprintk("ISO response %d to much data - "
 				"expected %u got %u\n",
 				i, total_length + packet_length,
@@ -1878,8 +1922,10 @@ vusb_send_control_urb(struct vusb_device *vdev, struct vusb_urbp *urbp)
 	dprint_hex_dump(D_URB2, "SET: ",
 		DUMP_PREFIX_OFFSET, 16, 1, ctrl, 8, true);
 
-	/* The only special case it a set address request. We can't actually
-	 * let the guest do this in the backend - it would cause mayhem */
+	/*
+	 * The only special case it a set address request. We can't actually
+	 * let the guest do this in the backend - it would cause mayhem.
+	 */
 	if (ctrl_tr == (DeviceOutRequest | USB_REQ_SET_ADDRESS)) {
 		vdev->address = ctrl_value;
 		dprintk(D_URB1, "SET ADDRESS %u\n", vdev->address);
@@ -1940,7 +1986,7 @@ vusb_start_processing_caller(struct vusb_rh_port *vport, const char *caller)
 
 	spin_lock_irqsave(&vhcd->lock, flags);
 
-	if (vhcd->hcd_state == VUSB_HCD_INACTIVE || !vport->present) {
+	if (unlikely(vhcd->hcd_state == VUSB_HCD_INACTIVE || !vport->present)) {
 		spin_unlock_irqrestore(&vhcd->lock, flags);
 		eprintk("%s called start processing - device %p "
 			"invalid state - vhcd: %d vport: %d\n",
@@ -2001,7 +2047,7 @@ vusb_process_reset(struct vusb_rh_port *vport)
 	ret = vusb_put_internal_request(&vport->vdev, VUSB_CMD_RESET, 0);
 	spin_unlock_irqrestore(&vport->vdev.lock, flags);
 
-	if (ret) {
+	if (unlikely(ret)) {
 		eprintk("Failed to send reset for device %p on port %d - ret: %d\n",
 			&vport->vdev, vport->port, ret);
 		return;
@@ -2054,8 +2100,10 @@ vusb_process(struct vusb_device *vdev, struct vusb_urbp *urbp, bool more_work)
 
 	spin_lock_irqsave(&vdev->lock, flags);
 
-	/* Always drive any response processing since this could make room for
-	 * requests. */
+	/*
+	 * Always drive any response processing since this could make room for
+	 * requests.
+	 */
 	list_for_each_entry_safe(pos, next, &vdev->finish_list, urbp_list) {
 		vusb_urb_finish(vdev, pos, more_work);
 	}
@@ -2091,11 +2139,13 @@ vusb_release(struct vusb_device *vdev)
 
 	spin_unlock_irqrestore(&vdev->lock, flags);
 
-	/* If there are any URBs to release, they have to be cleaned up in the
+	/*
+	 * If there are any URBs to release, they have to be cleaned up in the
 	 * work item callback. Calls to usb_hcd_giveback_urb cannot be called
 	 * within calls made by the enqueue/dequeue HCD callbacks. This can
 	 * lead to deadlocks in the URB completion routines. The call to
-	 * vusb_urbp_release must be made outside of any locks. */
+	 * vusb_urbp_release must be made outside of any locks.
+	 */
 	list_for_each_entry_safe(pos, next, &tmp, urbp_list) {
 		vusb_urbp_release(vhcd, pos);
 	}
@@ -2136,8 +2186,9 @@ vusb_interrupt(int irq, void *dev_id)
 
 	spin_lock_irqsave(&vdev->lock, flags);
 
-	/* If not processing, the ring code is allowed to run to
-	 * do a final ring flush.
+	/*
+	 * If not processing, the ring code is allowed to run to do a final
+	 * ring flush.
 	 */
 	if (!processing && !vdev->rflush) {
 		spin_unlock_irqrestore(&vdev->lock, flags);
@@ -2174,9 +2225,11 @@ again:
 			continue;
 		}
 
-		/* Make a copy of the response (it is small) and queue for bh.
+		/*
+		 * Make a copy of the response (it is small) and queue for BH.
 		 * Not going to free the shadow here - that could be a lot of work;
-		 * dropping it on the BH to take care of */
+		 * dropping it on the BH to take care of.
+		 */
 		memcpy(&shadow->urbp->rsp, rsp, sizeof(usbif_response_t));
 
 		/* Detach ISO packet info from the shadow for the urbp */
@@ -2295,7 +2348,7 @@ vusb_setup_usbfront(struct vusb_device *vdev)
 	vdev->irq = 0;
 
 	sring = (struct usbif_sring *)__get_free_page(GFP_NOIO | __GFP_HIGH);
-	if (!sring) {
+	if (unlikely(!sring)) {
 		xenbus_dev_fatal(dev, -ENOMEM, "allocating shared ring");
 		return -ENOMEM;
 	}
@@ -2303,7 +2356,7 @@ vusb_setup_usbfront(struct vusb_device *vdev)
 	FRONT_RING_INIT(&vdev->ring, sring, PAGE_SIZE);
 
 	err = xenbus_grant_ring(dev, virt_to_mfn(vdev->ring.sring));
-	if (err < 0) {
+	if (unlikely(err < 0)) {
 		free_page((unsigned long)sring);
 		vdev->ring.sring = NULL;
 		goto fail;
@@ -2311,14 +2364,14 @@ vusb_setup_usbfront(struct vusb_device *vdev)
 	vdev->ring_ref = err;
 
 	err = xenbus_alloc_evtchn(dev, &vdev->evtchn);
-	if (err) {
+	if (unlikely(err)) {
 		vdev->evtchn = EVTCHN_INVALID;
 		goto fail;
 	}
 
 	err = bind_evtchn_to_irqhandler(vdev->evtchn, vusb_interrupt,
 					USBFRONT_IRQF, "usbif", vdev);
-	if (err <= 0) {
+	if (unlikely(err <= 0)) {
 		eprintk("bind_evtchn_to_irqhandler failed device %p ret: %d\n",
 			vdev, err);
 		goto fail;
@@ -2328,7 +2381,7 @@ vusb_setup_usbfront(struct vusb_device *vdev)
 	/* Allocate the shadow buffers */
 	vdev->shadows = kzalloc(sizeof(struct vusb_shadow)*SHADOW_ENTRIES,
 				GFP_KERNEL);
-	if (!vdev->shadows) {
+	if (unlikely(!vdev->shadows)) {
 		xenbus_dev_fatal(dev, err, "allocate shadows failed");
 		err = -ENOMEM;
 		goto fail;
@@ -2336,7 +2389,7 @@ vusb_setup_usbfront(struct vusb_device *vdev)
 
 	vdev->shadow_free_list = kzalloc(sizeof(u16)*SHADOW_ENTRIES,
 				GFP_KERNEL);
-	if (!vdev->shadow_free_list) {
+	if (unlikely(!vdev->shadow_free_list)) {
 		xenbus_dev_fatal(dev, err, "allocate shadow list failed");
 		err = -ENOMEM;
 		goto fail;
@@ -2365,40 +2418,40 @@ vusb_talk_to_usbback(struct vusb_device *vdev)
 
 	/* Create shared ring, alloc event channel. */
 	err = vusb_setup_usbfront(vdev);
-	if (err)
+	if (unlikely(err))
 		goto out;
 
 again:
 	err = xenbus_transaction_start(&xbt);
-	if (err) {
+	if (unlikely(err)) {
 		xenbus_dev_fatal(dev, err, "starting transaction");
 		goto free_usbif;
 	}
 
 	err = xenbus_printf(xbt, dev->nodename,
 	 		"ring-ref", "%u", vdev->ring_ref);
-	if (err) {
+	if (unlikely(err)) {
 		message = "writing ring-ref";
 		goto abort_transaction;
 	}
 
 	err = xenbus_printf(xbt, dev->nodename,
 			"event-channel", "%u", vdev->evtchn);
-	if (err) {
+	if (unlikely(err)) {
 		message = "writing event-channel";
 		goto abort_transaction;
 	}
 
 	err = xenbus_printf(xbt, dev->nodename, "version", "%d",
 			VUSB_INTERFACE_VERSION);
-	if (err) {
+	if (unlikely(err)) {
 		message = "writing protocol";
 		goto abort_transaction;
 	}
 
 	err = xenbus_transaction_end(xbt, 0);
 	if (err) {
-		if (err == -EAGAIN)
+		if (likely(err == -EAGAIN))
 			goto again;
 		xenbus_dev_fatal(dev, err, "completing transaction");
 		goto free_usbif;
@@ -2431,7 +2484,7 @@ vusb_create_device(struct vusb_vhcd *vhcd, struct xenbus_device *dev, u16 id)
 	spin_lock_irqsave(&vhcd->lock, flags);
 	vport = vusb_get_vport(vhcd, id);
 	spin_unlock_irqrestore(&vhcd->lock, flags);
-	if (!vport)
+	if (unlikely(!vport))
 		return -ENODEV;
 
 	vdev = vusb_vdev_by_port(vhcd, vport->port);
@@ -2447,10 +2500,12 @@ vusb_create_device(struct vusb_vhcd *vhcd, struct xenbus_device *dev, u16 id)
 	dev_set_drvdata(&dev->dev, vdev);
 	vdev->xendev = dev;
 
-	/* Setup the rings, event channel and xenstore. Internal failures cleanup
-	 * the usbif bits. Wipe the new VUSB dev and bail out. */
+	/*
+	 * Setup the rings, event channel and xenstore. Internal failures cleanup
+	 * the usbif bits. Wipe the new VUSB dev and bail out.
+	 */
 	ret = vusb_talk_to_usbback(vdev);
-	if (ret) {
+	if (unlikely(ret)) {
 		eprintk("Failed to initialize the device - id: %d\n", id);
 		dev_set_drvdata(&dev->dev, NULL);
 		spin_lock_irqsave(&vhcd->lock, flags);
@@ -2469,8 +2524,6 @@ vusb_start_device(struct vusb_device *vdev)
 	unsigned long flags;
 	int ret = 0;
 
-	/* TODO need a reset in here? The WFE gets that info from the registry */
-
 	/* Take the VHCD lock to change the state flags */
 	spin_lock_irqsave(&vhcd->lock, flags);
 	vport->present = 1;
@@ -2483,7 +2536,7 @@ vusb_start_device(struct vusb_device *vdev)
 	vdev->speed = (unsigned int)-1;
 
 	ret = vusb_put_internal_request(vdev, VUSB_CMD_SPEED, 0);
-	if (ret) {
+	if (unlikely(ret)) {
 		spin_unlock_irqrestore(&vdev->lock, flags);
 		eprintk("Failed to get device %p speed - ret: %d\n", vdev, ret);
 		return ret;
@@ -2549,8 +2602,7 @@ vusb_destroy_device(struct vusb_device *vdev)
 
 	spin_lock_irqsave(&vhcd->lock, flags);
 
-	/* First test if it is already closing or not there,
-	 * if not, set closing */
+	/* First test if it is already closing or not there, else set closing */
 	if (vport->closing || !vport->present) {
 		spin_unlock_irqrestore(&vhcd->lock, flags);
 		return;
@@ -2565,7 +2617,7 @@ vusb_destroy_device(struct vusb_device *vdev)
 		update_rh = true;
 
 	spin_unlock_irqrestore(&vhcd->lock, flags);
-	
+
 	/* Update root hub status, device gone, port empty */
 	if (update_rh)
 		usb_hcd_poll_rh_status(vhcd_to_hcd(vhcd));
@@ -2575,11 +2627,13 @@ vusb_destroy_device(struct vusb_device *vdev)
 	/* Main halt call, shut everything down */
 	vusb_usbif_halt(vdev);
 
-	/* NOTE removed lock here - should be OK since all processing
+	/*
+	 * NOTE removed lock here - should be OK since all processing
 	 * is halted now.
 	 */
 
-	/* Process any last completed URBs left before tearing up the
+	/*
+	 * Process any last completed URBs left before tearing up the
 	 * usbif bits.
 	 */
 	list_for_each_entry_safe(pos, next, &vdev->finish_list, urbp_list) {
@@ -2589,12 +2643,16 @@ vusb_destroy_device(struct vusb_device *vdev)
 	/* Main cleanup call, everyting is torn down in here */
 	vusb_usbif_free(vdev);
 
-	/* Unstrap vdev on failures and device destruction, not on the
-	 * resume path. */
+	/*
+	 * Unstrap vdev on failures and device destruction, not on the
+	 * resume path.
+	 */
 	dev_set_drvdata(&vdev->xendev->dev, NULL);
 
-	/* Release all the ready to release and pending URBs - this
-	 * has to be done outside a lock. */
+	/*
+	 * Release all the ready to release and pending URBs - this
+	 * has to be done outside a lock.
+	 */
 	list_for_each_entry_safe(pos, next, &vdev->release_list, urbp_list) {
 		vusb_urbp_release(vhcd, pos);
 	}
@@ -2622,7 +2680,7 @@ vusb_usbfront_probe(struct xenbus_device *dev, const struct xenbus_device_id *id
 
 	/* Make device ids out of the virtual-device value from xenstore */
 	err = xenbus_scanf(XBT_NIL, dev->nodename, "virtual-device", "%i", &vid);
-	if (err != 1) {
+	if (unlikely(err != 1)) {
 		eprintk("Failed to read virtual-device value\n");
 		return err;
 	}
@@ -2645,9 +2703,11 @@ vusb_usbback_changed(struct xenbus_device *dev, enum xenbus_state backend_state)
 	switch (backend_state) {
 	case XenbusStateUnknown:
 		/* if the backend vanishes from xenstore, close frontend */
-		if (!xenbus_exists(XBT_NIL, dev->otherend, "")) {
-			/* Gone is gone, don't care about our state since we do not reconnect
-			 * devices. Just destroy the device. */
+		if (unlikely(!xenbus_exists(XBT_NIL, dev->otherend, ""))) {
+			/*
+			 * Gone is gone, don't care about our state since we do not reconnect
+			 * devices. Just destroy the device.
+			 */
 			printk(KERN_INFO "backend vanished, closing frontend\n");
 			xenbus_switch_state(dev, XenbusStateClosed);
 			if (vdev)
@@ -2657,16 +2717,19 @@ vusb_usbback_changed(struct xenbus_device *dev, enum xenbus_state backend_state)
 	case XenbusStateInitialising:
 	case XenbusStateInitialised:
 	case XenbusStateInitWait:
-	/* These states appeared some time back in the 2.6 days, not entirely
+	/*
+	 * These states appeared some time back in the 2.6 days, not entirely
 	 * clear what kernels they are in but this breaks Debian 6. Since they
-	 * are not used anyway, just def them out in old kernels. */
+	 * are not used anyway, just def them out in old kernels.
+	 */
 #if ( LINUX_VERSION_CODE > KERNEL_VERSION(2,6,32) )
 	case XenbusStateReconfiguring:
 	case XenbusStateReconfigured:
 #endif
 		break;
 	case XenbusStateConnected:
-		/* When resuming, the device is already created and started.
+		/*
+		 * When resuming, the device is already created and started.
 		 * Only the backend connection needs to be re-established.
 		 */
 		if (vdev->resuming) {
@@ -2674,7 +2737,7 @@ vusb_usbback_changed(struct xenbus_device *dev, enum xenbus_state backend_state)
 			goto resume;
 		}
 
-		if (vusb_start_device(vdev)) {
+		if (unlikely(vusb_start_device(vdev))) {
 			printk(KERN_ERR "failed to start frontend, aborting!\n");
 			xenbus_switch_state(dev, XenbusStateClosed);
 			vusb_destroy_device(vdev);
@@ -2713,7 +2776,8 @@ vusb_usbfront_suspend(struct xenbus_device *dev)
 {
 	iprintk("xen_usbif: pm freeze event received, detaching usbfront\n");
 
-	/* When suspending, just set the front end to closing and let things
+	/*
+	 * When suspending, just set the front end to closing and let things
 	 * disconnect from the back. On resume the ring and ec will be rebuilt.
 	 */
 	xenbus_switch_state(dev, XenbusStateClosing);
@@ -2721,7 +2785,8 @@ vusb_usbfront_suspend(struct xenbus_device *dev)
 	return 0;
 }
 
-/* Tear down the xenbus lower interface and rebuild it on resume. The upper
+/*
+ * Tear down the xenbus lower interface and rebuild it on resume. The upper
  * vusb device layer state is intact as the kernel expects it to be. Note that
  * during the suspend operation, all drivers are supposed to cleanup their URBs
  * using usb_kill_urb() which will cleanup all the queues and URBs in calls
@@ -2749,8 +2814,10 @@ static struct xenbus_device_id vusb_usbfront_ids[] = {
 
 static struct xenbus_driver vusb_usbfront_driver = {
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(3,3,0))
-	/* In general, this is the kernel version where the switch over
-	 * happened except for Debian 6's kernel which has both.. */
+	/*
+	 * In general, this is the kernel version where the switch over
+	 * happened except for Debian 6's kernel which has both...
+	 */
 	.name = "xc-vusb",
 	.owner = THIS_MODULE,
 #else
@@ -2807,14 +2874,14 @@ vusb_platform_probe(struct platform_device *pdev)
 	int ret;
 	struct vusb_vhcd *vhcd;
 
-	if (usb_disabled())
+	if (unlikely(usb_disabled()))
 		return -ENODEV;
 
 	dprintk(D_MISC, ">vusb_hcd_probe\n");
 	dev_info(&pdev->dev, "%s, driver " VUSB_DRIVER_VERSION "\n", VUSB_DRIVER_DESC);
 
 	hcd = usb_create_hcd(&vusb_hcd_driver, &pdev->dev, dev_name(&pdev->dev));
-	if (!hcd)
+	if (unlikely(!hcd))
 		return -ENOMEM;
 
 	/* Indicate the USB stack that both High and Full speed are supported */
@@ -2826,12 +2893,12 @@ vusb_platform_probe(struct platform_device *pdev)
 	vhcd->hcd_state = VUSB_HCD_INACTIVE;
 
 	ret = usb_add_hcd(hcd, 0, 0);
-	if (ret != 0)
+	if (unlikely(ret != 0))
 		goto err_add;
 
 	/* vHCD is up, now initialize this device for xenbus */
 	ret = xenbus_register_frontend(&vusb_usbfront_driver);
-	if (ret)
+	if (unlikely(ret))
 		goto err_xen;
 
 	iprintk("xen_usbif initialized\n");
@@ -2860,16 +2927,20 @@ vusb_platform_remove(struct platform_device *pdev)
 	struct usb_hcd *hcd = platform_get_drvdata(pdev);
 	struct vusb_vhcd *vhcd = hcd_to_vhcd(hcd);
 
-	/* Sanity check the state of the platform. Unloading this module
-	 * should only be done for debugging and development purposes. */
+	/*
+	 * Sanity check the state of the platform. Unloading this module
+	 * should only be done for debugging and development purposes.
+	 */
 	vusb_platform_sanity_disable(vhcd);
 
 	/* Unregister from xenbus first */
 	xenbus_unregister_driver(&vusb_usbfront_driver);
 
-	/* A warning will result: "IRQ 0 already free". It seems the Linux
+	/*
+	 * A warning will result: "IRQ 0 already free". It seems the Linux
 	 * kernel doesn't set hcd->irq to -1 when IRQ is not enabled for a USB
-	 * driver. So we put an hack for this before usb_remove_hcd(). */
+	 * driver. So we put an hack for this before usb_remove_hcd().
+	 */
 	hcd->irq = -1;
 
 	usb_remove_hcd(hcd);
@@ -2958,14 +3029,16 @@ static bool module_ref_counted = false;
 static ssize_t vusb_enable_unload(struct device_driver *drv, const char *buf,
 				size_t count)
 {
-	/* In general we don't want this module to ever be unloaded since
+	/*
+	 * In general we don't want this module to ever be unloaded since
 	 * it is highly unsafe when there are active xenbus devices running
 	 * in this module. This sysfs attribute allows this module to be
-	 * unloaded for development and debugging work */
+	 * unloaded for development and debugging work.
+	 */
 	if (module_ref_counted) {
 		module_put(THIS_MODULE);
 		module_ref_counted = false;
-	} 
+	}
 
         return count;
 }
@@ -2991,39 +3064,39 @@ vusb_init(void)
 
 	iprintk("OpenXT USB host controller\n");
 
-	if (usb_disabled()) {
+	if (unlikely(usb_disabled())) {
 		wprintk("USB is disabled\n");
 		return -ENODEV;
 	}
 
 	ret = platform_driver_register(&vusb_platform_driver);
-	if (ret < 0) {
+	if (unlikely(ret < 0)) {
 		eprintk("Unable to register the platform\n");
 		goto fail_platform_driver;
 	}
 
 	vusb_platform_device =
 		platform_device_alloc(VUSB_PLATFORM_DRIVER_NAME, -1);
-	if (!vusb_platform_device) {
+	if (unlikely(!vusb_platform_device)) {
 		eprintk("Unable to allocate platform device\n");
 		ret = -ENOMEM;
 		goto fail_platform_device1;
 	}
 
 	ret = platform_device_add(vusb_platform_device);
-	if (ret < 0) {
+	if (unlikely(ret < 0)) {
 		eprintk("Unable to add the platform\n");
 		goto fail_platform_device2;
 	}
 
 	ret = driver_create_file(&vusb_platform_driver.driver,
 				&driver_attr_enable_unload);
-	if (ret < 0) {
+	if (unlikely(ret < 0)) {
 		eprintk("Unable to add driver attr\n");
 		goto fail_platform_device3;
 	}
 
-	if (!try_module_get(THIS_MODULE)) {
+	if (unlikely(!try_module_get(THIS_MODULE))) {
 		eprintk("Failed to get module ref count\n");
 		ret = -ENODEV;
 		goto fail_driver_create_file;
