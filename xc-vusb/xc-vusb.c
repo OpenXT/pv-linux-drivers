@@ -170,6 +170,7 @@ struct vusb_device {
 	u16				address;
 	enum usb_device_speed		speed;
 	bool				is_ss;
+	bool				is_cc;
 	bool				rflush;
 	bool				resuming;
 
@@ -1359,6 +1360,9 @@ vusb_put_urb(struct vusb_device *vdev, struct vusb_urbp *urbp)
 	if (!(urb->transfer_flags & URB_SHORT_NOT_OK) && usb_urb_dir_in(urb))
 		shadow->req.flags |= USBIF_F_SHORTOK;
 
+	if (vdev->is_cc && usb_urb_dir_in(urb))
+		shadow->req.flags |= USBIF_F_SHORTOK;
+
 	/* Set the urbp and req ID to the shadow value */
 	shadow->urbp = urbp;
 	urbp->id = shadow->req.id;
@@ -1763,6 +1767,22 @@ vusb_urb_control_finish(struct vusb_device *vdev, struct vusb_urbp *urbp)
 		buf[2] = 0x10;
 		buf[3] = 0x02;
 		buf[7] = 0x40;
+	}
+
+	/*
+	 * More fun. Smart/Chip Card reader drivers are setting
+	 * URB_SHORT_NOT_OK on BULK and INTERRUPT URBs which causes some URBs
+	 * to fail in the backend because they are shorted reads. If we do not
+	 * set URB_SHORT_NOT_OK in the backend for these devices, the reads
+	 * succeed and the SC driver is perfectly happy it seems. Not a long
+	 * term solution but a temporary quirk/workaround.
+	 */
+	if (ctrl->bRequest == USB_REQ_GET_DESCRIPTOR &&
+		(ctrl->wValue & 0xff00) == 0x0200 &&
+		urbp->rsp.actual_length >= 0x12 &&
+		buf[10] == 0x04 && buf[14] == 0x0b) {
+		iprintk("QUIRK for ChipCard interface\n");
+		vdev->is_cc = true;		
 	}
 
 	/* Get direction of control request and do common finish */
