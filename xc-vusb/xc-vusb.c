@@ -2829,6 +2829,7 @@ vusb_usbfront_resume(struct xenbus_device *dev)
 
 static struct xenbus_device_id vusb_usbfront_ids[] = {
 	{ "vusb" },
+	{ "vhid" },
 	{ "" }
 };
 
