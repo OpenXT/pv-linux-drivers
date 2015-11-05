@@ -1714,10 +1714,16 @@ vusb_urb_common_finish(struct vusb_device *vdev, struct vusb_urbp *urbp,
 		return;
 
 	urb->status = vusb_status_to_errno(urbp->rsp.status);
+
+	/*
+	 * An unsuccessful status may not mean the request actually failed. It
+	 * is up to the driver to interpret the returned status code. Simply
+	 * trace the situation and go on. Note handling errors here was
+	 * causing the short packet failures in OXT-411 (possibly others too).
+	 */
 	if (unlikely(urb->status)) {
-		wprintk("Failed %s URB urbp: %p urb: %p status: %d\n",
+		wprintk("Unsuccessful %s URB urbp: %p urb: %p status: %d\n",
 			vusb_dir_to_string(in), urbp, urb, urb->status);
-		return;
 	}
 
 	dprintk(D_URB2, "%s URB completed status %d len %u\n",
