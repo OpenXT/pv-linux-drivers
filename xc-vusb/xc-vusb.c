@@ -71,10 +71,10 @@
 #define MAX_PAGES_FOR_INDIRECT_REQUEST (MAX_INDIRECT_PAGES * USBIF_MAX_SEGMENTS_PER_IREQUEST)
 #define MAX_PAGES_FOR_INDIRECT_ISO_REQUEST (MAX_PAGES_FOR_INDIRECT_REQUEST - 1)
 
-#define D_VUSB1 (1 << 0)
-#define D_VUSB2 (1 << 1)
-#define D_URB1  (1 << 2)
-#define D_URB2  (1 << 3)
+#define D_VUSB  (1 << 0)
+#define D_URB1  (1 << 1)
+#define D_URB2  (1 << 2)
+#define D_URB3  (1 << 3)
 #define D_STATE (1 << 4)
 #define D_PORT1 (1 << 5)
 #define D_PORT2 (1 << 6)
@@ -108,6 +108,9 @@
 #define eprintk(format, args...) printk(KERN_ERR "vusb: " format, ##args)
 #define wprintk(format, args...) printk(KERN_WARNING "vusb: " format, ##args)
 #define iprintk(format, args...) printk(KERN_INFO "vusb: " format, ##args)
+
+#define VUSB_LOG_FAILED_URBS       0x00000001
+#define VUSB_LOG_FAILED_ISOCH_URBS 0x00000002
 
 /* How many ports on the root hub */
 #define VUSB_PORTS	USB_MAXCHILDREN
@@ -241,6 +244,8 @@ struct vusb_vhcd {
 	enum vusb_rh_state		rh_state;
 
 	struct vusb_rh_port		vrh_ports[VUSB_PORTS];
+
+	u32				logging_flags;
 };
 
 static struct platform_device *vusb_platform_device = NULL;
@@ -282,8 +287,6 @@ vusb_dev(struct vusb_vhcd *vhcd)
 	return vhcd_to_hcd(vhcd)->self.controller;
 }
 
-#ifdef VUSB_DEBUG
-
 /* Convert urb pipe type to string */
 static const char *
 vusb_pipe_to_string(struct urb *urb)
@@ -321,8 +324,6 @@ vusb_state_to_string(const struct vusb_urbp *urbp)
 		return "unknown";
 	}
 }
-
-#endif /* VUSB_DEBUG */
 
 /****************************************************************************/
 /* VUSB HCD & RH                                                            */
@@ -1585,35 +1586,31 @@ err:
 /****************************************************************************/
 /* URB Processing                                                           */
 
-#ifdef VUSB_DEBUG
 /* Dump URBp */
 static inline void
-vusb_urbp_dump(struct vusb_urbp *urbp)
+vusb_urbp_dump(struct vusb_device *vdev, struct vusb_urbp *urbp)
 {
 	struct urb *urb = urbp->urb;
 	unsigned int type;
 
 	type = usb_pipetype(urb->pipe);
 
-	iprintk("URB urbp: %p state: %s status: %d pipe: %s(%u)\n",
-		urbp, vusb_state_to_string(urbp),
-		urb->status, vusb_pipe_to_string(urb), type);
-	iprintk("device: %u endpoint: %u in: %u\n",
-		usb_pipedevice(urb->pipe), usb_pipeendpoint(urb->pipe),
-		usb_urb_dir_in(urb));
+	iprintk("URB urbp: %p vdev: %p state: %s status: %d %s\n",
+		urbp, vdev, vusb_state_to_string(urbp),
+		urb->status, (urb->status ? "FAILED" : "SUCCEEDED"));
+	iprintk("    urb: %p device: %u endpoint: %u in: %u pipe: %s(%u)\n",
+		urb, usb_pipedevice(urb->pipe), usb_pipeendpoint(urb->pipe),
+		usb_urb_dir_in(urb), vusb_pipe_to_string(urb), type);
+	iprintk("    flags: 0x%x transfer length: 0x%x actual length: 0x%x\n",
+		urb->transfer_flags, urb->transfer_buffer_length,
+		urbp->rsp.actual_length);
 }
-#endif /* VUSB_DEBUG */
 
 static void
 vusb_urbp_release(struct vusb_vhcd *vhcd, struct vusb_urbp *urbp)
 {
 	struct urb *urb = urbp->urb;
 	unsigned long flags;
-
-#ifdef VUSB_DEBUG
-	if (urb->status)
-		vusb_urbp_dump(urbp);
-#endif
 
 	dprintk(D_URB2, "Giveback URB urpb: %p status %d length %u\n",
 		urbp, urb->status, urb->actual_length);
@@ -1703,6 +1700,7 @@ static void
 vusb_urb_common_finish(struct vusb_device *vdev, struct vusb_urbp *urbp,
 			bool in)
 {
+	struct vusb_vhcd *vhcd = vusb_vhcd_by_vdev(vdev);
 	struct urb *urb = urbp->urb;
 
 	/*
@@ -1722,8 +1720,8 @@ vusb_urb_common_finish(struct vusb_device *vdev, struct vusb_urbp *urbp,
 	 * causing the short packet failures in OXT-411 (possibly others too).
 	 */
 	if (unlikely(urb->status)) {
-		wprintk("Unsuccessful %s URB urbp: %p urb: %p status: %d\n",
-			vusb_dir_to_string(in), urbp, urb, urb->status);
+		if (vhcd->logging_flags & VUSB_LOG_FAILED_URBS)
+			vusb_urbp_dump(vdev, urbp);
 	}
 
 	dprintk(D_URB2, "%s URB completed status %d len %u\n",
@@ -1780,6 +1778,7 @@ static void
 vusb_urb_isochronous_finish(struct vusb_device *vdev, struct vusb_urbp *urbp,
 				bool in)
 {
+	struct vusb_vhcd *vhcd = vusb_vhcd_by_vdev(vdev);
 	struct urb *urb = urbp->urb;
 	struct usb_iso_packet_descriptor *iso_desc = &urb->iso_frame_desc[0];
 	u32 total_length = 0, packet_length;
@@ -1796,8 +1795,10 @@ vusb_urb_isochronous_finish(struct vusb_device *vdev, struct vusb_urbp *urbp,
 	urb->status = vusb_status_to_errno(urbp->rsp.status);
 
 	/* Did the entire ISO request fail? */
-	if (urb->status)
-		goto iso_err;
+	if (urb->status) {
+		if (vhcd->logging_flags & VUSB_LOG_FAILED_ISOCH_URBS)
+			vusb_urbp_dump(vdev, urbp);
+	}
 
 	/* Reset packet error count */
 	urb->error_count = 0;
@@ -1823,13 +1824,12 @@ vusb_urb_isochronous_finish(struct vusb_device *vdev, struct vusb_urbp *urbp,
 				"expected %u got %u\n",
 				i, total_length + packet_length,
 				urb->transfer_buffer_length);
-				goto iso_err;
+				goto iso_io;
 		}
 
 		if (!iso_desc[i].status)
-			total_length += packet_length;
-		else
 			urb->error_count++;
+		total_length += packet_length;
 	}
 
 	/* Check for new start frame */
@@ -2628,7 +2628,7 @@ vusb_destroy_device(struct vusb_device *vdev)
 	if (update_rh)
 		usb_hcd_poll_rh_status(vhcd_to_hcd(vhcd));
 
-	dprintk(D_PORT1, "Remove device from port %u\n", vport->port);
+	iprintk("Remove device from port %u\n", vport->port);
 
 	/* Main halt call, shut everything down */
 	vusb_usbif_halt(vdev);
@@ -3033,9 +3033,11 @@ static struct platform_driver vusb_platform_driver = {
 
 static bool module_ref_counted = false;
 
-static ssize_t vusb_enable_unload(struct device_driver *drv, const char *buf,
-				size_t count)
+static ssize_t
+vusb_store_enable_unload(struct device_driver *drv,
+		const char *buf, size_t count)
 {
+
 	/*
 	 * In general we don't want this module to ever be unloaded since
 	 * it is highly unsafe when there are active xenbus devices running
@@ -3050,13 +3052,41 @@ static ssize_t vusb_enable_unload(struct device_driver *drv, const char *buf,
         return count;
 }
 
-static DRIVER_ATTR(enable_unload, S_IWUSR, NULL, vusb_enable_unload);
+static DRIVER_ATTR(enable_unload, S_IWUSR,
+		NULL, vusb_store_enable_unload);
+
+static ssize_t
+vusb_show_logging_flags(struct device_driver *drv, char *buf)
+{
+	struct vusb_vhcd *vhcd =
+		hcd_to_vhcd(platform_get_drvdata(vusb_platform_device));
+
+	return snprintf(buf, PAGE_SIZE, "0x%X\n", vhcd->logging_flags);
+}
+
+static ssize_t
+vusb_store_logging_flags(struct device_driver *drv,
+		const char *buf, size_t count)
+{
+	struct vusb_vhcd *vhcd =
+                hcd_to_vhcd(platform_get_drvdata(vusb_platform_device));
+
+	if (kstrtouint(buf, 0, &vhcd->logging_flags) < 0)
+                return -EINVAL;
+
+	return strnlen(buf, count);
+}
+
+static DRIVER_ATTR(logging_flags, S_IRUSR | S_IWUSR,
+		vusb_show_logging_flags, vusb_store_logging_flags);
 
 static void
 vusb_cleanup(void)
 {
 	iprintk("clean up\n");
 	if (vusb_platform_device) {
+		driver_remove_file(&vusb_platform_driver.driver,
+				&driver_attr_logging_flags);
 		driver_remove_file(&vusb_platform_driver.driver,
 				&driver_attr_enable_unload);
 		platform_device_unregister(vusb_platform_device);
@@ -3099,20 +3129,30 @@ vusb_init(void)
 	ret = driver_create_file(&vusb_platform_driver.driver,
 				&driver_attr_enable_unload);
 	if (unlikely(ret < 0)) {
-		eprintk("Unable to add driver attr\n");
+		eprintk("Unable to add driver attr enable unload\n");
 		goto fail_platform_device3;
+	}
+
+	ret = driver_create_file(&vusb_platform_driver.driver,
+				&driver_attr_logging_flags);
+	if (unlikely(ret < 0)) {
+		eprintk("Unable to add driver attr for logging flags\n");
+		goto fail_driver_create_file1;
 	}
 
 	if (unlikely(!try_module_get(THIS_MODULE))) {
 		eprintk("Failed to get module ref count\n");
 		ret = -ENODEV;
-		goto fail_driver_create_file;
+		goto fail_driver_create_file2;
 	}
 	module_ref_counted = true;
 
 	return 0;
 
-fail_driver_create_file:
+fail_driver_create_file2:
+	driver_remove_file(&vusb_platform_driver.driver,
+			&driver_attr_logging_flags);
+fail_driver_create_file1:
 	driver_remove_file(&vusb_platform_driver.driver,
 			&driver_attr_enable_unload);
 fail_platform_device3:
