@@ -1078,7 +1078,7 @@ vusb_put_shadow(struct vusb_device *vdev, struct vusb_shadow *shadow)
 		ireq = (usbif_indirect_request_t*)shadow->indirect_reqs;
 
 		for (i = 0; i < shadow->req.nr_segments; i++) {
-			for (j = 0; j < ireq[j].nr_segments; j++) {
+			for (j = 0; j < ireq[i].nr_segments; j++) {
 				gnttab_end_foreign_access(ireq[i].gref[j], 0, 0UL);
 			}
 		}
@@ -1222,7 +1222,7 @@ vusb_allocate_indirect_grefs(struct vusb_device *vdev,
 				usb_urb_dir_out(shadow->urbp->urb)); /* OUT is write, so RO */
 
 		indirect_reqs[0].nr_segments++;
-		j++;
+		k++; /* Second gref slot in the first indirect reqs page */
 	}
 
 	for ( ; i < nr_mfns; i++, va += PAGE_SIZE) {
@@ -1391,7 +1391,7 @@ vusb_put_urb(struct vusb_device *vdev, struct vusb_urbp *urbp)
 		nr_ind_pages = INDIRECT_PAGES_REQUIRED(nr_mfns);
 		shadow->indirect_reqs_size = nr_ind_pages*PAGE_SIZE;
 		shadow->indirect_reqs =
-			kmalloc(nr_ind_pages*PAGE_SIZE,
+			kzalloc(nr_ind_pages*PAGE_SIZE,
 				GFP_ATOMIC);
 		if (unlikely(!shadow->indirect_reqs)) {
 			eprintk("%s out of memory\n", __FUNCTION__);
@@ -1513,7 +1513,7 @@ vusb_put_isochronous_urb(struct vusb_device *vdev, struct vusb_urbp *urbp)
 		nr_ind_pages = INDIRECT_PAGES_REQUIRED(nr_mfns + 1);
 		shadow->indirect_reqs_size = nr_ind_pages*PAGE_SIZE;
 		shadow->indirect_reqs =
-			kmalloc(nr_ind_pages*PAGE_SIZE,
+			kzalloc(nr_ind_pages*PAGE_SIZE,
 				GFP_ATOMIC);
 		if (unlikely(!shadow->indirect_reqs)) {
 			eprintk("%s out of memory\n", __FUNCTION__);
