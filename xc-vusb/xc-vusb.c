@@ -1458,7 +1458,6 @@ vusb_put_isochronous_urb(struct vusb_device *vdev, struct vusb_urbp *urbp)
 	struct urb *urb = urbp->urb;
 	usbif_iso_packet_info_t *iso_packets;
 	u32 nr_mfns = 0, nr_ind_pages;
-	u16 seg_length;
 	int ret = 0, i;
 
 	BUG_ON(!urb);
@@ -1486,10 +1485,9 @@ vusb_put_isochronous_urb(struct vusb_device *vdev, struct vusb_urbp *urbp)
 		goto err;
 	}
 
-	seg_length = (u16)urb->transfer_buffer_length/urb->number_of_packets;
 	for (i = 0; i < urb->number_of_packets; i++) {
 		iso_packets[i].offset = urb->iso_frame_desc[i].offset;
-		iso_packets[i].length = seg_length;
+		iso_packets[i].length = urb->iso_frame_desc[i].length;
 	}
 
 	shadow->iso_packet_info = iso_packets;
