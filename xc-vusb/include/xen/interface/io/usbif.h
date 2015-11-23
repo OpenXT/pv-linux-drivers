@@ -1,8 +1,8 @@
 /******************************************************************************
  * usbif.h
- * 
+ *
  * Unified usb-device I/O interface for Xen guest OSes.
- * 
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
  * deal in the Software without restriction, including without limitation the
@@ -38,7 +38,7 @@
  * notification can be made conditional on req_event (i.e., the generic
  * hold-off mechanism provided by the ring macros). Backends must set
  * req_event appropriately (e.g., using RING_FINAL_CHECK_FOR_REQUESTS()).
- * 
+ *
  * Back->front notifications: When enqueuing a new response, sending a
  * notification can be made conditional on rsp_event (i.e., the generic
  * hold-off mechanism provided by the ring macros). Frontends must set
@@ -123,7 +123,7 @@ struct usbif_response {
     usbif_request_len_t actual_length;
     uint32_t            data;
     int16_t             status;          /* USBIF_RSP_???       */
-    uint32_t            pad;
+    uint32_t            error_count;     /* total ISOCH error count */
 };
 typedef struct usbif_response usbif_response_t;
 

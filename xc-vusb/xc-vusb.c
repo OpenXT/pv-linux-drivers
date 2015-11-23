@@ -1221,8 +1221,8 @@ vusb_allocate_indirect_grefs(struct vusb_device *vdev,
 				vdev->xendev->otherend_id, iso_mfn,
 				usb_urb_dir_out(shadow->urbp->urb)); /* OUT is write, so RO */
 
-		indirect_reqs[0].nr_segments++;
-		k++; /* Second gref slot in the first indirect reqs page */
+		indirect_reqs[0].nr_segments = 1;
+		k = 1; /* Second gref slot in the first indirect reqs page */
 	}
 
 	for ( ; i < nr_mfns; i++, va += PAGE_SIZE) {
@@ -1240,7 +1240,7 @@ vusb_allocate_indirect_grefs(struct vusb_device *vdev,
 
 		indirect_reqs[j].nr_segments++;
 		if (++k ==  USBIF_MAX_SEGMENTS_PER_IREQUEST) {
-			indirect_reqs[++j].nr_segments = 0;
+			j++;
 			k = 0;
 		}
  	}
@@ -1391,7 +1391,7 @@ vusb_put_urb(struct vusb_device *vdev, struct vusb_urbp *urbp)
 		nr_ind_pages = INDIRECT_PAGES_REQUIRED(nr_mfns);
 		shadow->indirect_reqs_size = nr_ind_pages*PAGE_SIZE;
 		shadow->indirect_reqs =
-			kzalloc(nr_ind_pages*PAGE_SIZE,
+			kzalloc(shadow->indirect_reqs_size,
 				GFP_ATOMIC);
 		if (unlikely(!shadow->indirect_reqs)) {
 			eprintk("%s out of memory\n", __FUNCTION__);
@@ -1513,7 +1513,7 @@ vusb_put_isochronous_urb(struct vusb_device *vdev, struct vusb_urbp *urbp)
 		nr_ind_pages = INDIRECT_PAGES_REQUIRED(nr_mfns + 1);
 		shadow->indirect_reqs_size = nr_ind_pages*PAGE_SIZE;
 		shadow->indirect_reqs =
-			kzalloc(nr_ind_pages*PAGE_SIZE,
+			kzalloc(shadow->indirect_reqs_size,
 				GFP_ATOMIC);
 		if (unlikely(!shadow->indirect_reqs)) {
 			eprintk("%s out of memory\n", __FUNCTION__);
@@ -1815,7 +1815,6 @@ vusb_urb_isochronous_finish(struct vusb_device *vdev, struct vusb_urbp *urbp,
 		iso_desc[i].actual_length = packet_length;
 		iso_desc[i].status =
 			vusb_status_to_errno(urbp->iso_packet_info[i].status);
-		iso_desc[i].offset = urbp->iso_packet_info[i].offset;
 
 		/* Do sanity check each time on effective data length */
 		if (unlikely((in) && (urb->transfer_buffer_length <
@@ -1827,14 +1826,15 @@ vusb_urb_isochronous_finish(struct vusb_device *vdev, struct vusb_urbp *urbp,
 				goto iso_io;
 		}
 
-		if (!iso_desc[i].status)
-			urb->error_count++;
 		total_length += packet_length;
 	}
 
 	/* Check for new start frame */
 	if (urb->transfer_flags & URB_ISO_ASAP)
 		urb->start_frame = urbp->rsp.data;
+
+	/* Get the ISOCH error counter */
+	urb->error_count = urbp->rsp.error_count;
 
 	urb->actual_length = total_length;
 	dprintk(D_URB2, "ISO response urbp: %p total: %u errors: %d\n",
