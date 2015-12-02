@@ -1,0 +1,2 @@
+xc-v4v/include/xen/v4v.h /usr/include/xen/v4v.h
+xc-v4v/include/linux/v4v_dev.h /usr/include/linux/v4v_dev.h

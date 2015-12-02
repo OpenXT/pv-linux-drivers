@@ -1,0 +1,44 @@
+Source: openxt-pv-linux-drivers
+Maintainer: OpenXT <openxt@googlegroups.com>
+Section: kernel
+Priority: optional
+Standards-Version: 3.9.4
+Build-Depends: debhelper (>= 9), dkms
+
+Package: openxt-pv-linux-drivers
+Architecture: any
+Section: kernel
+Depends: openxt-pv-v4v-dkms, openxt-pv-xenmou-dkms, openxt-pv-vusb-dkms
+Description: meta installer package
+ Installer package which depends on provided dkms packages.
+
+Package: openxt-pv-v4v-dkms
+Architecture: i386 amd64
+Section: kernel
+Depends: ${misc:Depends}, dkms, linux-libc-dev, libc6-dev, linux-headers-generic [i386 amd64] | linux-headers
+Description: v4v dkms
+ DKMS package for v4v.
+
+Package: openxt-pv-xenmou-dkms
+Section: kernel
+Architecture: i386 amd64
+Depends: ${misc:Depends}, dkms, linux-libc-dev, libc6-dev, linux-headers-generic [i386 amd64] | linux-headers
+Description: xenmou dkms
+ DKMS package for xenmou.
+
+Package: openxt-pv-vusb-dkms
+Section: kernel
+Architecture: i386 amd64
+Depends: ${misc:Depends}, dkms, linux-libc-dev, libc6-dev, linux-headers-generic [i386 amd64] | linux-headers
+Description: vusb dkms
+ DKMS package for virtual usb.
+
+Package: openxt-pv-v4v-dev
+Section: libdevel
+Priority: optional
+Architecture: any
+Depends: 
+Description: v4v headers
+ Linux and Xen headers for v4v.
+
+

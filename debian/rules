@@ -1,0 +1,17 @@
+#!/usr/bin/make -f
+
+UPSTREAM_VERSION  := $(shell dpkg-parsechangelog | grep Version: | cut -d" " -f2 | cut -d"-" -f1)
+
+%:
+	dh "$@" --with dkms
+
+override_dh_auto_clean:
+	rm -f debian/openxt-pv-v4v-dkms.install
+	rm -f debian/openxt-pv-vusb-dkms.install
+	rm -f debian/openxt-pv-xenmou-dkms.install
+
+override_dh_auto_build:
+	sed 's/@UPSTREAM_VERSION@/'$(UPSTREAM_VERSION)/ debian/openxt-pv-v4v-dkms.install.in >debian/openxt-pv-v4v-dkms.install
+	sed 's/@UPSTREAM_VERSION@/'$(UPSTREAM_VERSION)/ debian/openxt-pv-vusb-dkms.install.in >debian/openxt-pv-vusb-dkms.install
+	sed 's/@UPSTREAM_VERSION@/'$(UPSTREAM_VERSION)/ debian/openxt-pv-xenmou-dkms.install.in >debian/openxt-pv-xenmou-dkms.install
+	echo "skipping build... do not want to build"
