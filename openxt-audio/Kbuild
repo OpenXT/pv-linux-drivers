@@ -1,0 +1,3 @@
+obj-m += openxt-audio.o
+
+openxt-audio-y := main.o ring.o xen-time.o

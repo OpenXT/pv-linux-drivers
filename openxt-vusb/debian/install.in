@@ -1,0 +1,4 @@
+Makefile usr/src/openxt-vusb-DEB_VERSION_UPSTREAM
+Kbuild usr/src/openxt-vusb-DEB_VERSION_UPSTREAM
+openxt-vusb.c usr/src/openxt-vusb-DEB_VERSION_UPSTREAM
+include/xen/interface/io/usbif.h usr/src/openxt-vusb-DEB_VERSION_UPSTREAM/include/xen/interface/io
