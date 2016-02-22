@@ -11,7 +11,7 @@ This repository contains the custom OpenXT PV Linux drivers. Each of these
 drivers is a separate DKMS package. The OpenXT build places these packages in
 the installers (debs/rpms) on the tools ISO. The driver projects are:
 
-xc-audio:
+openxt-audio:
 
 PV audio front end driver that works with a separate audio daemon back end
 running in dom0. This is a standard ring, grant tables and even channel
@@ -20,20 +20,20 @@ front/back type of driver though the backend is in user land.
 (NOTE 7/30/2015 this driver has not been maintained and its state as well as
 the state of the backend are currently unknown).
 
-xc-xenmou:
+openxt-xenmou:
 
 PV mouse and multi-touch front end driver that uses a device model back end in
 QEMU. It uses emulated registers to communicate with the device model and a
 logical ring of input events read off a shared page.
 
-xc-v4v:
+openxt-v4v:
 
 Interdomain communications driver that interfaces the v4v hypervisor
 extensions in OpenXT. The interfacing is done directly through hypercalls and
 events are raised using a dedicated VIRQ. All guest to guest communications
 is brokered through the hypervisor.
 
-xc-vusb:
+openxt-vusb:
 
 PV USB virtual host controller and root hub front end driver that works with
 an OpenXT version of the PV USB back end driver. This is a standard ring, grant

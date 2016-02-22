@@ -2823,10 +2823,10 @@ static struct xenbus_driver vusb_usbfront_driver = {
 	 * In general, this is the kernel version where the switch over
 	 * happened except for Debian 6's kernel which has both...
 	 */
-	.name = "xc-vusb",
+	.name = "openxt-vusb",
 	.owner = THIS_MODULE,
 #else
-	.driver.name = "xc-vusb",
+	.driver.name = "openxt-vusb",
 	.driver.owner = THIS_MODULE,
 #endif
 	.ids = vusb_usbfront_ids,

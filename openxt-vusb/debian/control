@@ -1,0 +1,11 @@
+Source: openxt-vusb
+Section: kernel
+Priority: optional
+Maintainer: OpenXT Community
+Build-Depends: dkms
+
+Package: openxt-vusb-dkms
+Architecture: all
+Depends: dkms
+Description: OpenXT vusb
+ OpenXT vusb driver for Linux
