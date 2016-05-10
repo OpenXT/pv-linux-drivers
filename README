@@ -11,15 +11,6 @@ This repository contains the custom OpenXT PV Linux drivers. Each of these
 drivers is a separate DKMS package. The OpenXT build places these packages in
 the installers (debs/rpms) on the tools ISO. The driver projects are:
 
-openxt-audio:
-
-PV audio front end driver that works with a separate audio daemon back end
-running in dom0. This is a standard ring, grant tables and even channel
-front/back type of driver though the backend is in user land.
-
-(NOTE 7/30/2015 this driver has not been maintained and its state as well as
-the state of the backend are currently unknown).
-
 openxt-xenmou:
 
 PV mouse and multi-touch front end driver that uses a device model back end in
