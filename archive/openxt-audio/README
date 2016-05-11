@@ -1,0 +1,11 @@
+openxt-audio:
+
+PV audio front end driver that works with a separate audio daemon back end
+running in dom0. This is a standard ring, grant tables and even channel
+front/back type of driver though the backend is in user land.
+
+(NOTE 7/30/2015 this driver has not been maintained and its state as well as
+the state of the backend are currently unknown).
+
+(NOTE 5/10/2016 this driver is unmaintained and is no longer being installed
+in the Linux tools packages. It has been moved to the archive subdir).
