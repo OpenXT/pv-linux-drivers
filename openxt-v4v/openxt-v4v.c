@@ -62,6 +62,11 @@
 #include <linux/slab.h>
 #endif
 
+#if ( LINUX_VERSION_CODE >= KERNEL_VERSION(3,19,0) )
+/* Disappeared between 3.18 and 3.19 */
+#define get_unused_fd() get_unused_fd_flags(0)
+#endif
+
 #define MOAN do { printk(KERN_ERR "%s:%d MOAN called\n",__FILE__,__LINE__); } while (1==0)
 
 #define DEFAULT_RING_SIZE 	(V4V_ROUNDUP((((PAGE_SIZE)*32) - sizeof(v4v_ring_t)-V4V_ROUNDUP(1))))
