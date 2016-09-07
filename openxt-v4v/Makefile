@@ -40,12 +40,16 @@ export NOSTDINC_FLAGS := -I$(CURDIR)/include
 all:
 	make -C $(KDIR) V=1 M=$(CURDIR) modules EXTRA_CFLAGS="-g -O2"
 
-install:
+modules_install:
+	install -d ${DESTDIR}/lib/modules/${KVERSION}/kernel/driver/xen
+	install -m 0644 openxt-v4v.ko ${DESTDIR}/lib/modules/${KVERSION}/kernel/driver/xen
+
+install: modules_install
 	install -d ${DESTDIR}/usr/include/xen
 	install -m 0644 include/xen/v4v.h ${DESTDIR}/usr/include/xen
-	
 	install -d ${DESTDIR}/usr/include/linux
 	install -m 0644 include/linux/v4v_dev.h ${DESTDIR}/usr/include/linux
+	depmod -a
 
 clean:
 	make -C $(KDIR) M=$(CURDIR) clean
