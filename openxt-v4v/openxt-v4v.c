@@ -2835,7 +2835,11 @@ allocate_fd_with_private (void *private)
   struct inode *ind;
 #endif
 
-  fd = get_unused_fd ();
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3,7,0))
+  fd = get_unused_fd();
+#else
+  fd = get_unused_fd_flags(O_CLOEXEC);
+#endif
   if (fd < 0)
     return fd;
 
