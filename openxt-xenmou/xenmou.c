@@ -159,8 +159,6 @@ static void destroy_device (struct XenMou_DriverInfo *dr, int slot);
 static int xenmou_thread_fn (void *data);
 
 
-MODULE_DEVICE_TABLE (pci, xenmou_pci_tbl);
-
 static const struct pci_device_id xenmou_pci_tbl[]
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(3,8,0))
 __devinitdata
@@ -169,6 +167,7 @@ __devinitdata
     {PCI_DEVICE (XENMOU_VENDOR, XENMOU_ID)},
     {0,}                        /* 0 terminated list. */
 };
+MODULE_DEVICE_TABLE (pci, xenmou_pci_tbl);
 
 static int suspend (struct pci_dev *dev, pm_message_t state)
 {
@@ -463,7 +462,7 @@ int xenmou_init_one (struct pci_dev *dev, const struct pci_device_id *id)
         goto exit;
     }
 
-    ret = request_irq (dev->irq, irq_handler, IRQF_SHARED | IRQF_DISABLED, XENMOU_NAME, &DriverInfo);
+    ret = request_irq (dev->irq, irq_handler, IRQF_SHARED, XENMOU_NAME, &DriverInfo);
 
     iowrite32(0x3, &DriverInfo.control->control);
     printk (KERN_INFO "XenMou (v%d) inishalised ok. OS = %d\n", rev, hostos);
