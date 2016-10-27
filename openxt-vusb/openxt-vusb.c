@@ -2345,6 +2345,9 @@ vusb_setup_usbfront(struct vusb_device *vdev)
 {
 	struct xenbus_device *dev = vdev->xendev;
 	struct usbif_sring *sring;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,1,0)
+	grant_ref_t gref;
+#endif
 	int err, i;
 
 	vdev->ring_ref = GRANTREF_INVALID;
@@ -2359,13 +2362,21 @@ vusb_setup_usbfront(struct vusb_device *vdev)
 	SHARED_RING_INIT(sring);
 	FRONT_RING_INIT(&vdev->ring, sring, PAGE_SIZE);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,1,0)
+	err = xenbus_grant_ring(dev, vdev->ring.sring, 1, &gref);
+#else
 	err = xenbus_grant_ring(dev, virt_to_mfn(vdev->ring.sring));
+#endif
 	if (unlikely(err < 0)) {
 		free_page((unsigned long)sring);
 		vdev->ring.sring = NULL;
 		goto fail;
 	}
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,1,0)
+	vdev->ring_ref = gref;
+#else
 	vdev->ring_ref = err;
+#endif
 
 	err = xenbus_alloc_evtchn(dev, &vdev->evtchn);
 	if (unlikely(err)) {
