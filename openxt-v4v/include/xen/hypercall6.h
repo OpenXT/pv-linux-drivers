@@ -29,6 +29,7 @@
 #endif
 
 #undef __HYPERCALL_DECLS
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4,6,0)
 #define __HYPERCALL_DECLS						\
 	register unsigned long __res  asm(__HYPERCALL_RETREG);		\
 	register unsigned long __arg1 asm(__HYPERCALL_ARG1REG) = __arg1; \
@@ -37,6 +38,17 @@
 	register unsigned long __arg4 asm(__HYPERCALL_ARG4REG) = __arg4; \
 	register unsigned long __arg5 asm(__HYPERCALL_ARG5REG) = __arg5; \
 	register unsigned long __arg6 asm(__HYPERCALL_ARG6REG) = __arg6;
+#else
+#define __HYPERCALL_DECLS						\
+	register unsigned long __res  asm(__HYPERCALL_RETREG);		\
+	register unsigned long __arg1 asm(__HYPERCALL_ARG1REG) = __arg1; \
+	register unsigned long __arg2 asm(__HYPERCALL_ARG2REG) = __arg2; \
+	register unsigned long __arg3 asm(__HYPERCALL_ARG3REG) = __arg3; \
+	register unsigned long __arg4 asm(__HYPERCALL_ARG4REG) = __arg4; \
+	register unsigned long __arg5 asm(__HYPERCALL_ARG5REG) = __arg5; \
+	register unsigned long __arg6 asm(__HYPERCALL_ARG6REG) = __arg6; \
+	register void *__sp asm(_ASM_SP);
+#endif
 
 #undef __HYPERCALL_CLOBBER5
 
