@@ -3,6 +3,7 @@ Section: kernel
 Priority: optional
 Maintainer: OpenXT Community
 Build-Depends: dkms
+Standards-Version: 1.0.0
 
 Package: openxt-xenmou-dkms
 Architecture: all
