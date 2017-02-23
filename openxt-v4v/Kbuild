@@ -1,1 +1,2 @@
+ccflags-y = -I$(src)/include
 obj-m += openxt-v4v.o 
