@@ -23,11 +23,13 @@ KVERSION := $(shell uname -r)
 all:
 	make -C /lib/modules/${KVERSION}/build M=$(PWD) modules -I$(PWD) EXTRA_CFLAGS="-g -I$(PWD)/include -I$(PWD)"
 
-install:
-
 module_install:
 	install -d ${DESTDIR}/lib/modules/${KVERSION}/kernel/driver/xen
 	install -m 0644 xenmou.ko ${DESTDIR}/lib/modules/${KVERSION}/kernel/driver/xen
+
+modules_install: module_install
+
+install: modules_install
 	depmod -a
 
 clean:
@@ -44,20 +46,18 @@ dpkg_control="tmp-deb/control"
 xenmou-dkms_${XENMOU_VERSION}_all.deb: dpkg-build
 	rm -rf tmp-deb
 	mkdir -p ${dpkg_data} ${dpkg_control} ${dpkg_data}/usr/src/xenmou-${XENMOU_VERSION}
-	
 	cp -r dkms.conf Makefile xenmou.c debug.h ${dpkg_data}/usr/src/xenmou-${XENMOU_VERSION}
 	install -m 0644 -D dkms/lintian ${dpkg_data}/usr/share/lintian/overrides/xenmou-dkms
 	install -m 0755 -d ${dpkg_data}/usr/share/doc/xenmou-dkms
 	(cd ${dpkg_data}/usr/share/doc/xenmou-dkms && ln -s ../../common-licenses/GPL-2 copyright)
 	( cd tmp-deb/data && find . -type f -exec md5sum {} \;) | sed -re 's| ./||g' > ${dpkg_control}/md5sums
 	tar  --create --owner=root --group=root --gzip --file=tmp-deb/data.tar.gz --directory=tmp-deb/data .
-	
 	cp dkms/debian-binary tmp-deb
 	cp dkms/postinst dkms/prerm ${dpkg_control}
 	cp control ${dpkg_control}
 	tar  --create --owner=root --group=root --gzip --file=tmp-deb/control.tar.gz --directory=tmp-deb/control .
-	
 	( cd tmp-deb && ar rcD ../$@ debian-binary control.tar.gz data.tar.gz)
+
 dpkg: xenmou-dkms_${XENMOU_VERSION}_all.deb
 
 lintian: xenmou-dkms_${XENMOU_VERSION}_all.deb
