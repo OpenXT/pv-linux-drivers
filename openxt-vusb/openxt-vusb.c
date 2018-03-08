@@ -3043,7 +3043,7 @@ static struct platform_driver vusb_platform_driver = {
 static bool module_ref_counted = false;
 
 static ssize_t
-vusb_store_enable_unload(struct device_driver *drv,
+enable_unload_store(struct device_driver *drv,
 		const char *buf, size_t count)
 {
 
@@ -3061,11 +3061,15 @@ vusb_store_enable_unload(struct device_driver *drv,
         return count;
 }
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,14,0))
 static DRIVER_ATTR(enable_unload, S_IWUSR,
-		NULL, vusb_store_enable_unload);
+               NULL, enable_unload_store);
+#else
+static DRIVER_ATTR_WO(enable_unload);
+#endif
 
 static ssize_t
-vusb_show_logging_flags(struct device_driver *drv, char *buf)
+logging_flags_show(struct device_driver *drv, char *buf)
 {
 	struct vusb_vhcd *vhcd =
 		hcd_to_vhcd(platform_get_drvdata(vusb_platform_device));
@@ -3074,7 +3078,7 @@ vusb_show_logging_flags(struct device_driver *drv, char *buf)
 }
 
 static ssize_t
-vusb_store_logging_flags(struct device_driver *drv,
+logging_flags_store(struct device_driver *drv,
 		const char *buf, size_t count)
 {
 	struct vusb_vhcd *vhcd =
@@ -3086,8 +3090,12 @@ vusb_store_logging_flags(struct device_driver *drv,
 	return strnlen(buf, count);
 }
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4,14,0))
 static DRIVER_ATTR(logging_flags, S_IRUSR | S_IWUSR,
-		vusb_show_logging_flags, vusb_store_logging_flags);
+               logging_flags_show, logging_flags_store);
+#else
+static DRIVER_ATTR_RW(logging_flags);
+#endif
 
 static void
 vusb_cleanup(void)
