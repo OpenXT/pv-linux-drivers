@@ -17,13 +17,6 @@ PV mouse and multi-touch front end driver that uses a device model back end in
 QEMU. It uses emulated registers to communicate with the device model and a
 logical ring of input events read off a shared page.
 
-openxt-v4v:
-
-Interdomain communications driver that interfaces the v4v hypervisor
-extensions in OpenXT. The interfacing is done directly through hypercalls and
-events are raised using a dedicated VIRQ. All guest to guest communications
-is brokered through the hypervisor.
-
 openxt-vusb:
 
 PV USB virtual host controller and root hub front end driver that works with
