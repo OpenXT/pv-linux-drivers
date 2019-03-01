@@ -2278,6 +2278,8 @@ vusb_usbif_halt(struct vusb_device *vdev)
 {
 	struct vusb_rh_port *vport = vusb_vport_by_vdev(vdev);
 	unsigned long flags;
+	unsigned long end;
+	int ret;
 
 	spin_lock_irqsave(&vdev->lock, flags);
 	vdev->rflush = true;
@@ -2296,12 +2298,22 @@ vusb_usbif_halt(struct vusb_device *vdev)
 	flush_work(&vdev->work);
 #endif
 
+	end = jiffies + msecs_to_jiffies(750);
 	/* Eat up anything left on the ring */
-	while (wait_event_interruptible(vdev->wait_queue,
-		vdev->ring.req_prod_pvt == vdev->ring.rsp_cons
-		&& !RING_HAS_UNCONSUMED_RESPONSES(&vdev->ring))
-		== -ERESTARTSYS)
-		;
+	do {
+		ret = wait_event_interruptible_timeout(vdev->wait_queue,
+			vdev->ring.req_prod_pvt == vdev->ring.rsp_cons &&
+			!RING_HAS_UNCONSUMED_RESPONSES(&vdev->ring),
+			end - jiffies);
+
+	} while (ret == -ERESTARTSYS && time_is_before_jiffies(end));
+
+	if (ret == 0) {
+		iprintk(
+		    "%s: timeout req_prod_pvt=%u rsp_cons=%u, unconsumed=%d\n",
+		    __func__, vdev->ring.req_prod_pvt, vdev->ring.rsp_cons,
+		    RING_HAS_UNCONSUMED_RESPONSES(&vdev->ring));
+	}
 
 	/* Wait for all processing to stop now */
 	vusb_wait_stop_processing(vport);
