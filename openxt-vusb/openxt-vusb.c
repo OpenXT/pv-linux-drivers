@@ -461,7 +461,12 @@ vusb_port_reset(struct vusb_vhcd *vhcd, struct vusb_rh_port *vport)
 	 * Test reset gate, only want one reset in flight at a time per
 	 * port. If the gate is set, it will return the "unless" value.
 	 */
+#if ( LINUX_VERSION_CODE >= KERNEL_VERSION(4,19,0) )
+	/* https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/commit?id=bfc18e389c7a09fbbbed6bf4032396685b14246e */
+	if (atomic_fetch_add_unless(&vport->reset_pending, 1, 1) == 1)
+#else
 	if (__atomic_add_unless(&vport->reset_pending, 1, 1) == 1)
+#endif
 		return;
 
 	/* Schedule it for the device, can't do it here in the vHCD lock */
