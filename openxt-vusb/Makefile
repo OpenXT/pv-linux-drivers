@@ -41,10 +41,10 @@ export NOSTDINC_FLAGS := -I$(CURDIR)/include
 
 ifeq ($(DEBUG),n)
 all:
-	make -C $(KDIR) V=1 M=$(CURDIR) modules EXTRA_CFLAGS="-O2"
+	make -C $(KDIR) V=1 M=$(CURDIR) modules EXTRA_CFLAGS="-O2 $(NOSTDINC_FLAGS)"
 else
 all:
-	make -C $(KDIR) V=1 M=$(CURDIR) modules EXTRA_CFLAGS="-g -O0 -fno-omit-frame-pointer"
+	make -C $(KDIR) V=1 M=$(CURDIR) modules EXTRA_CFLAGS="-g -O0 -fno-omit-frame-pointer $(NOSTDINC_FLAGS)"
 endif
 
 modules_install:
