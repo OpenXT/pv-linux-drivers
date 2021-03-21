@@ -21,7 +21,7 @@ ifneq ($(KERNELRELEASE),)
 ifneq ($(FROM_DKMS),y)
 include Kbuild
 else
-KDIR := /lib/modules/${KVERSION}/build
+KDIR ?= /lib/modules/${KVERSION}/build
 ENOSTDINC_FLAGS := -I$(CURDIR)/include
 
 mdkms:
@@ -34,7 +34,7 @@ else
 
 KVERSION ?= $(shell uname -r)
 
-KDIR := /lib/modules/${KVERSION}/build
+KDIR ?= /lib/modules/${KVERSION}/build
 export NOSTDINC_FLAGS := -I$(CURDIR)/include
 
 all:
