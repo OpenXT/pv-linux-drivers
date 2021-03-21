@@ -3212,3 +3212,4 @@ module_exit(vusb_cleanup);
 
 MODULE_DESCRIPTION("Xen virtual USB frontend");
 MODULE_LICENSE ("GPL");
+MODULE_ALIAS("xen:vusb");
