@@ -6,6 +6,8 @@
 *.ko.cmd
 *.mod.c
 *.o.cmd
+*.mod
+*.cmd
 modules.order
 Module.symvers
 .tmp_versions/
