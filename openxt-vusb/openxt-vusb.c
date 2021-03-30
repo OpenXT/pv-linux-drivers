@@ -798,6 +798,13 @@ vusb_hcd_urb_dequeue(struct usb_hcd *hcd, struct urb *urb, int status)
 static int
 vusb_hcd_get_frame(struct usb_hcd *hcd)
 {
+#if ( LINUX_VERSION_CODE >= KERNEL_VERSION(4,20,0) )
+	ktime_t time = ktime_get();
+
+	dprintk(D_MISC, "*vusb_get_frame\n");
+
+	return ktime_to_ms(time);
+#else
 	struct timeval	tv;
 
 	dprintk(D_MISC, "*vusb_get_frame\n");
@@ -805,6 +812,7 @@ vusb_hcd_get_frame(struct usb_hcd *hcd)
 	do_gettimeofday(&tv);
 
 	return tv.tv_usec / 1000;
+#endif
 }
 
 #define PORT_C_MASK \
@@ -3204,3 +3212,4 @@ module_exit(vusb_cleanup);
 
 MODULE_DESCRIPTION("Xen virtual USB frontend");
 MODULE_LICENSE ("GPL");
+MODULE_ALIAS("xen:vusb");

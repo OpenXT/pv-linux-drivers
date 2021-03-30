@@ -16,14 +16,12 @@
 # Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 #
 
-DEBUG ?= n
-
 ifneq ($(KERNELRELEASE),)
 # kbuild part of makefile
 ifneq ($(FROM_DKMS),y)
 include Kbuild
 else
-KDIR := /lib/modules/${KVERSION}/build
+KDIR ?= /lib/modules/${KVERSION}/build
 ENOSTDINC_FLAGS := -I$(CURDIR)/include
 
 mdkms:
@@ -36,16 +34,11 @@ else
 
 KVERSION ?= $(shell uname -r)
 
-KDIR := /lib/modules/${KVERSION}/build
+KDIR ?= /lib/modules/${KVERSION}/build
 export NOSTDINC_FLAGS := -I$(CURDIR)/include
 
-ifeq ($(DEBUG),n)
 all:
-	make -C $(KDIR) V=1 M=$(CURDIR) modules EXTRA_CFLAGS="-O2"
-else
-all:
-	make -C $(KDIR) V=1 M=$(CURDIR) modules EXTRA_CFLAGS="-g -O0 -fno-omit-frame-pointer"
-endif
+	make -C $(KDIR) V=1 M=$(CURDIR) modules EXTRA_CFLAGS="$(NOSTDINC_FLAGS)"
 
 modules_install:
 	make -C $(KDIR) V=1 M=$(CURDIR) modules_install
