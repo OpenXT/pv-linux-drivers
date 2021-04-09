@@ -827,7 +827,6 @@ vusb_hcd_hub_status(struct usb_hcd *hcd, char *buf)
 {
 	struct vusb_vhcd *vhcd = hcd_to_vhcd(hcd);
 	unsigned long flags;
-	int resume = 0;
 	int changed = 0;
 	u16 length = 0;
 	int ret = 0;
@@ -868,12 +867,9 @@ vusb_hcd_hub_status(struct usb_hcd *hcd, char *buf)
 					vport->port, vport->port_status);
 			changed = 1;
 		}
-
-		if (vport->port_status & USB_PORT_STAT_CONNECTION)
-			resume = 1;
 	}
 
-	if (resume && vhcd->rh_state == VUSB_RH_SUSPENDED)
+	if (vhcd->rh_state == VUSB_RH_SUSPENDED && changed)
 		usb_hcd_resume_root_hub(hcd);
 
 	ret = (changed) ? length : 0;
