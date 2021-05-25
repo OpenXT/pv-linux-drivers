@@ -131,6 +131,11 @@
 #define vusb_dir_to_string(d) (d ? "IN" : "OUT")
 #define vusb_start_processing(v) vusb_start_processing_caller(v, (__FUNCTION__))
 
+#ifndef RHEL_RELEASE_CODE
+#define RHEL_RELEASE_CODE 0
+#define RHEL_RELEASE_VERSION(a,b) (((a) << 8) + (b))
+#endif
+
 /* Possible state of an urbp */
 enum vusb_urbp_state {
 	VUSB_URBP_NEW,
@@ -461,7 +466,8 @@ vusb_port_reset(struct vusb_vhcd *vhcd, struct vusb_rh_port *vport)
 	 * Test reset gate, only want one reset in flight at a time per
 	 * port. If the gate is set, it will return the "unless" value.
 	 */
-#if ( LINUX_VERSION_CODE >= KERNEL_VERSION(4,19,0) )
+#if (RHEL_RELEASE_CODE != 0) && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,4)) || \
+    ( LINUX_VERSION_CODE >= KERNEL_VERSION(4,19,0) )
 	/* https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git/commit?id=bfc18e389c7a09fbbbed6bf4032396685b14246e */
 	if (atomic_fetch_add_unless(&vport->reset_pending, 1, 1) == 1)
 #else
