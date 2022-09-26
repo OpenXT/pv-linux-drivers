@@ -2223,6 +2223,14 @@ again:
 		if (shadow->req.type > USBIF_T_INT) {
 			if (shadow->req.type == USBIF_T_GET_SPEED) {
 				vdev->speed = rsp->data;
+				if (vdev->speed == -1) {
+					eprintk("Received an uninitialized device from the backend!\n");
+					eprintk("Device was likely removed before the backend could respond with its configuration\n");
+
+					// set our device speed to UNKNOWN to prevent our wait in
+					// vusb_start_device from blocking indefinitely.
+					vdev->speed = USB_SPEED_UNKNOWN;
+				}
 				wake_up_interruptible(&vdev->wait_queue);
 			}
 			else if (shadow->req.type == USBIF_T_RESET) {
@@ -2600,10 +2608,9 @@ vusb_start_device(struct vusb_device *vdev)
 		vdev->is_ss = true;
 		break;
 	default:
-		wprintk("Warning, setting default USB_SPEED_HIGH"
-			" for device %p - original value: %d",
+		eprintk("Speed requested from backend for device %p but got junk in response (%d)",
 			vdev, vdev->speed);
-		vdev->speed = USB_SPEED_HIGH;
+		return 1;
 	}
 
 	/* Root hub port state is owned by the VHCD so use its lock */
