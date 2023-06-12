@@ -136,6 +136,11 @@
 #define RHEL_RELEASE_VERSION(a,b) (((a) << 8) + (b))
 #endif
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,18,0)
+#define gnttab_end_foreign_access(ref, page) \
+	gnttab_end_foreign_access(ref, 0, page)
+#endif
+
 /* Possible state of an urbp */
 enum vusb_urbp_state {
 	VUSB_URBP_NEW,
@@ -1085,16 +1090,12 @@ vusb_put_shadow(struct vusb_device *vdev, struct vusb_shadow *shadow)
 	if (shadow->req.flags & USBIF_F_DIRECT_DATA)
 		goto no_gref;
 
-	/*
-	 * N.B. it turns out he readonly param to gnttab_end_foreign_access is,
-	 * unused, that is why we don't have to track it and use it here.
-	 */
 	if (shadow->indirect_reqs) {
 		ireq = (usbif_indirect_request_t*)shadow->indirect_reqs;
 
 		for (i = 0; i < shadow->req.nr_segments; i++) {
 			for (j = 0; j < ireq[i].nr_segments; j++) {
-				gnttab_end_foreign_access(ireq[i].gref[j], 0, 0UL);
+				gnttab_end_foreign_access(ireq[i].gref[j], 0UL);
 			}
 		}
 		kfree(shadow->indirect_reqs);
@@ -1104,7 +1105,7 @@ vusb_put_shadow(struct vusb_device *vdev, struct vusb_shadow *shadow)
 	shadow->indirect_reqs_size = 0;
 
 	for (i = 0; i < shadow->req.nr_segments; i++)
-		gnttab_end_foreign_access(shadow->req.u.gref[i], 0, 0UL);
+		gnttab_end_foreign_access(shadow->req.u.gref[i], 0UL);
 
 no_gref:
 	shadow->urbp = NULL;
@@ -1266,7 +1267,7 @@ vusb_allocate_indirect_grefs(struct vusb_device *vdev,
 
 cleanup:
 	for (i = 0; i < shadow->req.nr_segments; i++)
-		gnttab_end_foreign_access(shadow->req.u.gref[i], 0, 0UL);
+		gnttab_end_foreign_access(shadow->req.u.gref[i], 0UL);
 
 	shadow->req.nr_segments = 0;
 
