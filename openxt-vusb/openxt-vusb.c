@@ -47,7 +47,7 @@
 #include <xen/page.h>
 #include <xen/grant_table.h>
 
-#include <xen/interface/io/usbif.h>
+#include <xen/interface/io/usbif2.h>
 #include <xen/interface/memory.h>
 #include <xen/interface/grant_table.h>
 

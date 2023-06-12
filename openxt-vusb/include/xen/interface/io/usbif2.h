@@ -1,5 +1,5 @@
 /******************************************************************************
- * usbif.h
+ * usbif2.h
  *
  * Unified usb-device I/O interface for Xen guest OSes.
  *
