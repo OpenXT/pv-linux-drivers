@@ -2351,8 +2351,13 @@ vusb_usbif_free(struct vusb_device *vdev)
 	/* Free resources associated with old device channel. */
 	if (vdev->ring_ref != GRANTREF_INVALID) {
 		/* This frees the page too */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,19,0)
+		xenbus_teardown_ring((void **)&vdev->ring.sring, 1,
+				     &vdev->ring_ref);
+#else
 		gnttab_end_foreign_access(vdev->ring_ref, 0,
 					(unsigned long)vdev->ring.sring);
+#endif
 		vdev->ring_ref = GRANTREF_INVALID;
 		vdev->ring.sring = NULL;
 	}
@@ -2390,6 +2395,12 @@ vusb_setup_usbfront(struct vusb_device *vdev)
 	vdev->evtchn = EVTCHN_INVALID;
 	vdev->irq = 0;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,19,0)
+	err = xenbus_setup_ring(dev, GFP_KERNEL, (void **)&vdev->ring.sring,
+				1, &gref);
+	SHARED_RING_INIT(vdev->ring.sring);
+	FRONT_RING_INIT(&vdev->ring, vdev->ring.sring, PAGE_SIZE);
+#else
 	sring = (struct usbif_sring *)__get_free_page(GFP_NOIO | __GFP_HIGH);
 	if (unlikely(!sring)) {
 		xenbus_dev_fatal(dev, -ENOMEM, "allocating shared ring");
@@ -2398,10 +2409,11 @@ vusb_setup_usbfront(struct vusb_device *vdev)
 	SHARED_RING_INIT(sring);
 	FRONT_RING_INIT(&vdev->ring, sring, PAGE_SIZE);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,1,0)
+#  if LINUX_VERSION_CODE >= KERNEL_VERSION(4,1,0)
 	err = xenbus_grant_ring(dev, vdev->ring.sring, 1, &gref);
-#else
+#  else
 	err = xenbus_grant_ring(dev, virt_to_mfn(vdev->ring.sring));
+#  endif
 #endif
 	if (unlikely(err < 0)) {
 		free_page((unsigned long)sring);
