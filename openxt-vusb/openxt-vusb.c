@@ -2817,21 +2817,32 @@ resume:
 	}
 }
 
-static int
-vusb_xenusb_remove(struct xenbus_device *dev)
+static void _vusb_xenusb_remove(struct xenbus_device *dev)
 {
 	struct vusb_device *vdev = dev_get_drvdata(&dev->dev);
 
 	/* Did something else already destroy the vusb device? */
 	if (!vdev)
-		return 0;
+		return;
 
 	iprintk("xen_usbif remove %s\n", dev->nodename);
 
 	vusb_destroy_device(vdev);
 
+	return;
+}
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6,2,0))
+static void vusb_xenusb_remove(struct xenbus_device *dev)
+{
+	_vusb_xenusb_remove(dev);
+}
+#else
+static inline int vusb_xenusb_remove(struct xenbus_device *dev)
+{
+	_vusb_xenusb_remove(dev);
 	return 0;
 }
+#endif
 
 static int
 vusb_usbfront_suspend(struct xenbus_device *dev)
