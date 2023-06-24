@@ -47,7 +47,7 @@
 #include <xen/page.h>
 #include <xen/grant_table.h>
 
-#include <xen/interface/io/usbif.h>
+#include <xen/interface/io/usbif2.h>
 #include <xen/interface/memory.h>
 #include <xen/interface/grant_table.h>
 
@@ -134,6 +134,11 @@
 #ifndef RHEL_RELEASE_CODE
 #define RHEL_RELEASE_CODE 0
 #define RHEL_RELEASE_VERSION(a,b) (((a) << 8) + (b))
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5,18,0)
+#define gnttab_end_foreign_access(ref, page) \
+	gnttab_end_foreign_access(ref, 0, page)
 #endif
 
 /* Possible state of an urbp */
@@ -1085,16 +1090,12 @@ vusb_put_shadow(struct vusb_device *vdev, struct vusb_shadow *shadow)
 	if (shadow->req.flags & USBIF_F_DIRECT_DATA)
 		goto no_gref;
 
-	/*
-	 * N.B. it turns out he readonly param to gnttab_end_foreign_access is,
-	 * unused, that is why we don't have to track it and use it here.
-	 */
 	if (shadow->indirect_reqs) {
 		ireq = (usbif_indirect_request_t*)shadow->indirect_reqs;
 
 		for (i = 0; i < shadow->req.nr_segments; i++) {
 			for (j = 0; j < ireq[i].nr_segments; j++) {
-				gnttab_end_foreign_access(ireq[i].gref[j], 0, 0UL);
+				gnttab_end_foreign_access(ireq[i].gref[j], 0UL);
 			}
 		}
 		kfree(shadow->indirect_reqs);
@@ -1104,7 +1105,7 @@ vusb_put_shadow(struct vusb_device *vdev, struct vusb_shadow *shadow)
 	shadow->indirect_reqs_size = 0;
 
 	for (i = 0; i < shadow->req.nr_segments; i++)
-		gnttab_end_foreign_access(shadow->req.u.gref[i], 0, 0UL);
+		gnttab_end_foreign_access(shadow->req.u.gref[i], 0UL);
 
 no_gref:
 	shadow->urbp = NULL;
@@ -1266,7 +1267,7 @@ vusb_allocate_indirect_grefs(struct vusb_device *vdev,
 
 cleanup:
 	for (i = 0; i < shadow->req.nr_segments; i++)
-		gnttab_end_foreign_access(shadow->req.u.gref[i], 0, 0UL);
+		gnttab_end_foreign_access(shadow->req.u.gref[i], 0UL);
 
 	shadow->req.nr_segments = 0;
 
@@ -2350,8 +2351,13 @@ vusb_usbif_free(struct vusb_device *vdev)
 	/* Free resources associated with old device channel. */
 	if (vdev->ring_ref != GRANTREF_INVALID) {
 		/* This frees the page too */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,19,0)
+		xenbus_teardown_ring((void **)&vdev->ring.sring, 1,
+				     &vdev->ring_ref);
+#else
 		gnttab_end_foreign_access(vdev->ring_ref, 0,
 					(unsigned long)vdev->ring.sring);
+#endif
 		vdev->ring_ref = GRANTREF_INVALID;
 		vdev->ring.sring = NULL;
 	}
@@ -2389,6 +2395,12 @@ vusb_setup_usbfront(struct vusb_device *vdev)
 	vdev->evtchn = EVTCHN_INVALID;
 	vdev->irq = 0;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,19,0)
+	err = xenbus_setup_ring(dev, GFP_KERNEL, (void **)&vdev->ring.sring,
+				1, &gref);
+	SHARED_RING_INIT(vdev->ring.sring);
+	FRONT_RING_INIT(&vdev->ring, vdev->ring.sring, PAGE_SIZE);
+#else
 	sring = (struct usbif_sring *)__get_free_page(GFP_NOIO | __GFP_HIGH);
 	if (unlikely(!sring)) {
 		xenbus_dev_fatal(dev, -ENOMEM, "allocating shared ring");
@@ -2397,10 +2409,11 @@ vusb_setup_usbfront(struct vusb_device *vdev)
 	SHARED_RING_INIT(sring);
 	FRONT_RING_INIT(&vdev->ring, sring, PAGE_SIZE);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,1,0)
+#  if LINUX_VERSION_CODE >= KERNEL_VERSION(4,1,0)
 	err = xenbus_grant_ring(dev, vdev->ring.sring, 1, &gref);
-#else
+#  else
 	err = xenbus_grant_ring(dev, virt_to_mfn(vdev->ring.sring));
+#  endif
 #endif
 	if (unlikely(err < 0)) {
 		free_page((unsigned long)sring);
@@ -2804,21 +2817,32 @@ resume:
 	}
 }
 
-static int
-vusb_xenusb_remove(struct xenbus_device *dev)
+static void _vusb_xenusb_remove(struct xenbus_device *dev)
 {
 	struct vusb_device *vdev = dev_get_drvdata(&dev->dev);
 
 	/* Did something else already destroy the vusb device? */
 	if (!vdev)
-		return 0;
+		return;
 
 	iprintk("xen_usbif remove %s\n", dev->nodename);
 
 	vusb_destroy_device(vdev);
 
+	return;
+}
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6,2,0))
+static void vusb_xenusb_remove(struct xenbus_device *dev)
+{
+	_vusb_xenusb_remove(dev);
+}
+#else
+static inline int vusb_xenusb_remove(struct xenbus_device *dev)
+{
+	_vusb_xenusb_remove(dev);
 	return 0;
 }
+#endif
 
 static int
 vusb_usbfront_suspend(struct xenbus_device *dev)
