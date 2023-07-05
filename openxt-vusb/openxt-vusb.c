@@ -2355,7 +2355,7 @@ vusb_usbif_free(struct vusb_device *vdev)
 		xenbus_teardown_ring((void **)&vdev->ring.sring, 1,
 				     &vdev->ring_ref);
 #else
-		gnttab_end_foreign_access(vdev->ring_ref, 0,
+		gnttab_end_foreign_access(vdev->ring_ref,
 					(unsigned long)vdev->ring.sring);
 #endif
 		vdev->ring_ref = GRANTREF_INVALID;
